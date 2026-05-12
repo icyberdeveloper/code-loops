@@ -103,6 +103,9 @@ stages:
       - role: critic
         name: hallucination
         prompt: agents/architects/architect-critic-hallucination.md
+      - role: critic
+        name: ai
+        prompt: agents/architects/architect-critic-ai.md
       - role: responder
         prompt: agents/architects/software-architect.md
       - role: facilitator

@@ -5,7 +5,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 > Multi-agent development pipeline orchestrator. Turns a one-line task
-> description into shipped, reviewed, documented code via 25 specialized
+> description into shipped, reviewed, documented code via 26 specialized
 > AI agents running through a deterministic Python pipeline.
 
 **Status:** Pre-1.0. Battle-tested on a personal Python project
@@ -25,7 +25,7 @@ PRD          → Business Analyst writes a structured product brief with NFR gat
 Research     → 5 specialists scan codebase / prompts / incidents / data / AI surface in parallel
 Design       → Software Architect drafts an RFC; perspective lenses critique;
                debate-arbiter judges convergence (theme-based, not bug-count)
-Design Review→ Safety + Elegance + Hallucination critics review;
+Design Review→ Safety + Elegance + Hallucination + AI critics review;
                Architect responds; Review-Arbiter emits verdict
                (approved / needs_revision / redesign_needed)
 Impl Plan    → Tech Lead decomposes design into atomic, file-disjoint subtasks
@@ -77,7 +77,7 @@ uv tool install git+https://github.com/icyberdeveloper/code-loops.git
 code-loops --help
 ```
 Now `code-loops` is on your `$PATH` everywhere. `pipeline.yaml` and the
-25 agent prompts ship inside the wheel as package data.
+26 agent prompts ship inside the wheel as package data.
 
 ### Option 2: clone for development
 ```bash
@@ -180,10 +180,10 @@ code-loops/
 ├── pyproject.toml          # package metadata + `code-loops` entry point
 ├── src/code_loops/         # the package (ships in the wheel as installed data)
 │   ├── pipeline.yaml       #   ⭐ stage definitions (11 stages, types, role bindings)
-│   ├── agents/             #   25 agent prompts in 6 family folders:
+│   ├── agents/             #   26 agent prompts in 6 family folders:
 │   │   ├── strategy/       #     business-analyst, tech-lead
 │   │   ├── research/       #     research-lead + 5 researchers
-│   │   ├── architects/     #     software-architect + 6 architect-* (perspective, arbiters, 3 critics)
+│   │   ├── architects/     #     software-architect + 7 architect-* (perspective, arbiters, 4 critics)
 │   │   ├── engineering/    #     qa, software, code-reviewer, triage, prompt, eval engineers
 │   │   ├── release/        #     release-manager, tech-writer
 │   │   └── meta/           #     pipeline-evaluator, project-surveyor
@@ -316,7 +316,7 @@ Typical per-task spend (Opus-4.7 at max effort, 2026 pricing):
 | Research plan | $0.05–0.10 | Single Opus call |
 | Research (5 parallel) | $0.30–1.00 | 5 specialists, deep scans |
 | Design (RFC debate) | $1–4 | 2–5 rounds × (writer + perspectives + arbiter) |
-| Design Review (critique) | $0.50–2 | 1–3 rounds × (3 critics + responder + arbiter) |
+| Design Review (critique) | $0.60–2.50 | 1–3 rounds × (4 critics + responder + arbiter) |
 | Impl Plan | $0.20–0.50 | Tech-lead decomposition |
 | Implementation | $1–5 | per subtask × subtask count, depends on fix-loop iterations |
 | Validation | $0.00 | Programmatic only |
@@ -368,7 +368,7 @@ Reports land at `_eval/report_<timestamp>.md`.
 
 **Done**:
 - Full 11-stage pipeline with auto-loops (redesign_needed, needs_more_work, auto-resurvey)
-- 25 agents in 6 families with `{PROJECT_BRIEF}` injection
+- 26 agents in 6 families with `{PROJECT_BRIEF}` injection
 - Configurable test infrastructure (Python `tests/` default; pluggable)
 - `init` / `resurvey` / `projects` / `eval` CLI commands
 - 195 pytest tests covering orchestrator + worktree + agents
