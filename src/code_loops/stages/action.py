@@ -17,6 +17,7 @@ from __future__ import annotations
 from rich.console import Console
 
 from ..runner import RunnerFactory
+from .auto_resurvey import run_auto_resurvey
 from .final_validation import run_final_validation
 from .prompt import StageContext
 
@@ -24,6 +25,7 @@ console = Console()
 
 _HANDLERS = {
     "final_validation": run_final_validation,
+    "auto_resurvey": run_auto_resurvey,
 }
 
 

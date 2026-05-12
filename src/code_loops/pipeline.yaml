@@ -186,3 +186,13 @@ stages:
     outputs:
       - docs/changelog_entry.md
       - docs/adr/
+
+  # 11. Conditional auto-resurvey: if release_docs flagged brief.md staleness
+  #     via docs/maintenance_notes.md, re-invoke project-surveyor to refresh
+  #     projects/<name>/brief.md. Skips silently (no LLM call, no cost) when
+  #     no maintenance signal — typical case.
+  - name: auto_resurvey
+    type: action
+    handler: auto_resurvey
+    inputs: [docs/maintenance_notes.md]
+    outputs: []
