@@ -1,0 +1,188 @@
+# code-loops pipeline definition.
+#
+# Each stage declares:
+#   name           WHAT this stage does (semantic id; output dirs + meta tracking)
+#   type           HOW it's executed (engine handler key — defines stage shape)
+#   prompt         single-prompt stages: agent file
+#   branches       parallel stages: list of independent sub-runs (each has `branch: <name>`)
+#   roles          multi-agent stages: list of role slots (each has `role: <name>`).
+#                  Repeated `role:` entries (e.g. multiple `role: critic`) are
+#                  auto-grouped into a list by the handler.
+#   inputs         file paths the stage reads (relative to task_dir)
+#   outputs        file paths the stage writes (relative to task_dir)
+#   human_review   pause for human approval after this stage (optional)
+#   max_rounds     debate stages only — convergence iteration cap (optional)
+#
+# Agents live in `agents/<family>/` subfolders:
+#   strategy/      business-analyst, tech-lead
+#   research/      research-lead + 5x researcher-*
+#   architects/    software-architect + 5x architect-*
+#   engineering/   qa-engineer, software-engineer, code-reviewer, triage-engineer
+#   release/       release-manager, tech-writer
+#   meta/          pipeline-evaluator (invoked by `code-loops eval` CLI)
+#
+# Stages execute sequentially top-to-bottom. Some stages can auto-loop
+# (rfc → critique can bubble back on redesign_needed; release_review can
+# emit corrective_subtasks that re-enter implementation).
+#
+# `defaults:` below is merged into every stage AND every role at engine
+# load time (setdefault, not overwrite — so a role can override).
+
+defaults:
+  model: claude-opus-4-7
+  effort: max
+
+stages:
+
+  # 1. Business Analyst converts raw task into PRD with success criteria
+  - name: prd
+    type: prompt
+    prompt: agents/strategy/business-analyst.md
+    inputs: [task.md]
+    outputs: [prd/prd.md]
+    human_review: true
+
+  # 2. Research Lead defines investigation taxonomy (questions tagged by specialty)
+  - name: research_plan
+    type: prompt
+    prompt: agents/research/research-lead.md
+    inputs: [prd/prd.md]
+    outputs: [research_plan/plan.md]
+
+  # 3. Five specialists investigate in parallel — each takes only their tagged questions
+  - name: research
+    type: parallel
+    inputs: [task.md, research_plan/plan.md]
+    branches:
+      - branch: codebase
+        prompt: agents/research/researcher-codebase.md
+        outputs: [research/codebase.md]
+      - branch: prompts
+        prompt: agents/research/researcher-prompts.md
+        outputs: [research/prompts.md]
+      - branch: problems_lessons
+        prompt: agents/research/researcher-incidents.md
+        outputs: [research/problems_lessons.md]
+      - branch: data
+        prompt: agents/research/researcher-data.md
+        outputs: [research/data.md]
+      - branch: ai
+        prompt: agents/research/researcher-ai.md
+        outputs: [research/ai.md]
+
+  # 4. Architects iterate the design — writer drafts, perspective lenses critique,
+  #    debate-arbiter judges convergence (theme-based, not bug-count)
+  - name: design
+    type: debate_writer
+    inputs: [task.md, research_plan/plan.md, research/]
+    outputs: [design/final.md, design/debate.md]
+    max_rounds: 5
+    roles:
+      - role: writer
+        prompt: agents/architects/software-architect.md
+      - role: perspective
+        prompt: agents/architects/architect-perspective.md
+      - role: facilitator
+        prompt: agents/architects/architect-debate-arbiter.md
+
+  # 5. Architecture review board: safety + elegance critics in parallel,
+  #    architect responds, review-arbiter emits verdict.
+  #    On recurring-theme detection → redesign_needed → engine bubbles back to design
+  - name: design_review
+    type: debate_critique
+    inputs: [design/final.md]
+    outputs: [design_review/verdict.md, design_review/debate.md]
+    max_rounds: 3
+    roles:
+      - role: critic
+        name: safety
+        prompt: agents/architects/architect-critic-safety.md
+      - role: critic
+        name: elegance
+        prompt: agents/architects/architect-critic-elegance.md
+      - role: critic
+        name: hallucination
+        prompt: agents/architects/architect-critic-hallucination.md
+      - role: responder
+        prompt: agents/architects/software-architect.md
+      - role: facilitator
+        prompt: agents/architects/architect-review-arbiter.md
+    human_review: true
+
+  # 6. Tech Lead decomposes approved design into atomic subtasks
+  #    (TDD-ordered, file-disjoint, optional wave grouping)
+  - name: impl_plan
+    type: impl_planner
+    prompt: agents/strategy/tech-lead.md
+    inputs: [design/final.md]
+    outputs: [impl_plan/plan.md, impl_plan/subtasks.yaml]
+    human_review: true
+
+  # 7. TDD loop per subtask: QA writes failing tests → Software Engineer implements
+  #    → Code Reviewer audits → Triage Engineer routes failures.
+  #    Worktree-isolated; tests/ chmod 444 between writer + coder; STUCK escalates.
+  #
+  #    Optional pre-roles (planner-driven): if tech-lead emits a subtask with
+  #    `needs: [prompt_engineer, eval_engineer]` in subtasks.yaml, those roles
+  #    are invoked BEFORE test_writer. Generic engine dispatch — any role
+  #    declared here is invokable by name from the planner.
+  - name: implementation
+    type: subtask_iterator
+    inputs: [impl_plan/subtasks.yaml]
+    outputs: [implementation/_full_diff.patch, implementation/_files_changed.txt]
+    # base_repo is read from project.yaml (project.base_repo). See
+    # ~/dev/.claude/code-loops-config/project.yaml or pass --project-config.
+    roles:
+      # Planner-invoked extras (only run when subtask.needs lists them):
+      - role: prompt_engineer
+        prompt: agents/engineering/prompt-engineer.md
+      - role: eval_engineer
+        prompt: agents/engineering/eval-engineer.md
+      # Standard TDD loop (always run):
+      - role: test_writer
+        prompt: agents/engineering/qa-engineer.md
+      - role: coder
+        prompt: agents/engineering/software-engineer.md
+      - role: reviewer
+        prompt: agents/engineering/code-reviewer.md
+      - role: fix_router
+        prompt: agents/engineering/triage-engineer.md
+
+  # 8. Programmatic gate (no LLM): pytest, ruff, file-coverage check
+  - name: validation
+    type: action
+    handler: final_validation
+    inputs: [design/final.md, implementation/_files_changed.txt]
+    outputs:
+      - validation/result.yaml
+      - validation/coverage.md
+      - validation/pytest.log
+      - validation/ruff.log
+
+  # 9. Release Manager gate: semantic compliance vs PRD/RFC.
+  #    Can issue corrective_subtasks → engine appends + re-runs implementation
+  - name: release_review
+    type: final_review
+    prompt: agents/release/release-manager.md
+    inputs:
+      - design/final.md
+      - prd/prd.md
+      - implementation/_full_diff.patch
+      - validation/result.yaml
+      - validation/coverage.md
+    outputs: [release_review/review.md, release_review/verdict.md]
+    human_review: true
+
+  # 10. Tech Writer generates changelog entry + (conditional) ADR for the shipped change
+  - name: release_docs
+    type: tech_writer
+    prompt: agents/release/tech-writer.md
+    inputs:
+      - prd/prd.md
+      - design/final.md
+      - implementation/_full_diff.patch
+      - implementation/_files_changed.txt
+      - meta.yaml
+    outputs:
+      - docs/changelog_entry.md
+      - docs/adr/

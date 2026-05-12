@@ -1,0 +1,38 @@
+[project]
+name = "code-loops"
+version = "0.1.0"
+description = "Multi-agent dev pipeline orchestrator with debate, subtask iteration, fix loops, and human-review checkpoints"
+requires-python = ">=3.11"
+dependencies = [
+    "rich>=13.7",
+    "typer>=0.12",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+code-loops = "code_loops.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/code_loops"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+# B008: typer/click idiom — function-call defaults are how options are declared
+ignore = ["E501", "B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
