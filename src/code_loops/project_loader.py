@@ -159,6 +159,58 @@ def get_test_infrastructure(project_config: dict | None) -> dict:
     return out
 
 
+_DEFAULT_REGRESSION = {
+    "enabled": False,
+    "command": None,
+    "output_path": None,
+    "threshold_pct": 5,
+}
+
+
+def get_regression_config(project_config: dict | None) -> dict:
+    """Return regression-check config with defaults filled in.
+
+    Default: {enabled: False, ...} — Stage 8.5 is a no-op for projects
+    that don't opt in.
+
+    Schema (under project.yaml `regression:`):
+    - enabled: bool. False → regression_check stage skips entirely.
+    - command: str | None. Shell-style argv joined with spaces, run in the
+      worktree (e.g. "uv run pytest -m eval --json"). The command must
+      write a JSON file at `output_path` containing `{metric: value, ...}`
+      where higher = better.
+    - output_path: str | None. Relative path under the worktree where the
+      bench writes its results JSON (e.g. "tests/eval_results.json").
+    - threshold_pct: int. Max allowed drop per metric before this stage
+      flags regression. e.g. 5 → fail if `current < baseline * 0.95`.
+
+    First run with no saved baseline: captures the current results as
+    the new baseline and passes (writes `projects/<name>/baselines/eval.json`).
+    """
+    if not project_config:
+        return dict(_DEFAULT_REGRESSION)
+    raw = project_config.get("regression") or {}
+    out = dict(_DEFAULT_REGRESSION)
+    if "enabled" in raw:
+        out["enabled"] = bool(raw["enabled"])
+    if "command" in raw:
+        cmd = raw["command"]
+        if cmd is not None and not isinstance(cmd, str):
+            raise ValueError("regression.command must be a string or null")
+        out["command"] = cmd
+    if "output_path" in raw:
+        op = raw["output_path"]
+        if op is not None and not isinstance(op, str):
+            raise ValueError("regression.output_path must be a string or null")
+        out["output_path"] = op
+    if "threshold_pct" in raw:
+        t = raw["threshold_pct"]
+        if not isinstance(t, int | float) or t < 0 or t > 100:
+            raise ValueError("regression.threshold_pct must be a number in [0, 100]")
+        out["threshold_pct"] = t
+    return out
+
+
 def read_brief(project_config: dict | None) -> str | None:
     """Read brief.md content if present. None if absent / unreadable."""
     p = get_brief_path(project_config)

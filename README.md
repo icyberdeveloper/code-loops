@@ -18,7 +18,7 @@ validation is in progress.
 ## What it does
 
 You hand `code-loops` a task (free-text or markdown file). It runs that
-task through an 11-stage pipeline of specialized agents:
+task through a 12-stage pipeline of specialized agents:
 
 ```
 PRD          → Business Analyst writes a structured product brief with NFR gate
@@ -37,6 +37,10 @@ Implementation
                Code Reviewer audits diff →
                Triage Engineer routes failures (max 3 attempts/target)
 Validation   → Programmatic gate: pytest, ruff, file-coverage check (no LLM)
+Regression   → Conditional eval-bench gate (no LLM). Off by default; opt-in
+               via project.yaml. Runs the project's bench, compares each
+               metric vs saved baseline, fails if any drops > threshold_pct.
+               First run captures baseline.
 Release Review → Release Manager gates semantic compliance vs PRD/RFC.
                  Can issue corrective_subtasks → engine re-enters Implementation
 Release Docs → Tech Writer produces changelog + ADR + maintenance notes
@@ -179,7 +183,7 @@ uv run code-loops eval                  # pipeline-evaluator: meta-analysis over
 code-loops/
 ├── pyproject.toml          # package metadata + `code-loops` entry point
 ├── src/code_loops/         # the package (ships in the wheel as installed data)
-│   ├── pipeline.yaml       #   ⭐ stage definitions (11 stages, types, role bindings)
+│   ├── pipeline.yaml       #   ⭐ stage definitions (12 stages, types, role bindings)
 │   ├── agents/             #   26 agent prompts in 6 family folders:
 │   │   ├── strategy/       #     business-analyst, tech-lead
 │   │   ├── research/       #     research-lead + 5 researchers
@@ -200,11 +204,12 @@ code-loops/
 │   └── stages/             #   stage handlers (one per `type:` in pipeline.yaml):
 │       ├── prompt.py, parallel.py, debate_writer.py, debate_critique.py,
 │       ├── impl_planner.py, subtask_iterator.py, action.py,
-│       ├── final_validation.py, final_review.py, tech_writer.py,
-│       └── auto_resurvey.py  # Stage 11 — conditional brief.md refresh
+│       ├── final_validation.py, regression_check.py, final_review.py,
+│       ├── tech_writer.py,
+│       └── auto_resurvey.py  # Stage 12 — conditional brief.md refresh
 ├── examples/               # starter templates (project.yaml)
 ├── scripts/                # CI helpers (e.g. check_no_leakage.sh)
-└── tests/                  # 201 pytest tests (orchestrator only)
+└── tests/                  # 214 pytest tests (orchestrator only)
 
 # WORKSPACE (created in user's CWD when running code-loops):
 <workspace>/
@@ -223,7 +228,7 @@ code-loops/
 
 Each stage declares `name` (semantic id), `type` (engine handler),
 prompts, inputs, outputs, and optional `human_review: true`,
-`max_rounds: N`. See `pipeline.yaml` for the full 11-stage definition;
+`max_rounds: N`. See `pipeline.yaml` for the full 12-stage definition;
 top of file documents the schema. A `defaults:` block sets
 `model + effort` for all stages (override per-role if needed).
 
@@ -320,6 +325,7 @@ Typical per-task spend (Opus-4.7 at max effort, 2026 pricing):
 | Impl Plan | $0.20–0.50 | Tech-lead decomposition |
 | Implementation | $1–5 | per subtask × subtask count, depends on fix-loop iterations |
 | Validation | $0.00 | Programmatic only |
+| Regression | $0.00 | Programmatic; off by default. When on, runs project's eval bench. |
 | Release Review | $0.30–1 | Single release-manager call |
 | Release Docs | $0.05–0.20 | tech-writer |
 | Auto Resurvey | $0–3 | $0 if brief stays accurate (typical); $0.30–3 if tech-writer flagged staleness |
@@ -367,7 +373,7 @@ Reports land at `_eval/report_<timestamp>.md`.
 ## Roadmap
 
 **Done**:
-- Full 11-stage pipeline with auto-loops (redesign_needed, needs_more_work, auto-resurvey)
+- Full 12-stage pipeline with auto-loops (redesign_needed, needs_more_work, auto-resurvey) and conditional regression gate
 - 26 agents in 6 families with `{PROJECT_BRIEF}` injection
 - Configurable test infrastructure (Python `tests/` default; pluggable)
 - `init` / `resurvey` / `projects` / `eval` CLI commands

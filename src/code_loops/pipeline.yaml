@@ -162,7 +162,21 @@ stages:
       - validation/pytest.log
       - validation/ruff.log
 
-  # 9. Release Manager gate: semantic compliance vs PRD/RFC.
+  # 9. Programmatic regression gate (no LLM). Conditional — runs only when
+  #    `regression.enabled: true` in project.yaml. Executes the project's
+  #    eval bench (e.g. `uv run pytest -m eval`), reads `output_path` JSON,
+  #    compares each metric against `projects/<name>/baselines/eval.json`.
+  #    First run captures the baseline. Subsequent runs FAIL if any metric
+  #    drops more than `threshold_pct` — Release Manager will block on
+  #    `validation/regression.md` presence with `status: regression`.
+  - name: regression_check
+    type: action
+    handler: regression_check
+    inputs: [implementation/_files_changed.txt]
+    outputs:
+      - validation/regression.md
+
+  # 10. Release Manager gate: semantic compliance vs PRD/RFC.
   #    Can issue corrective_subtasks → engine appends + re-runs implementation
   - name: release_review
     type: final_review
@@ -173,10 +187,11 @@ stages:
       - implementation/_full_diff.patch
       - validation/result.yaml
       - validation/coverage.md
+      - validation/regression.md
     outputs: [release_review/review.md, release_review/verdict.md]
     human_review: true
 
-  # 10. Tech Writer generates changelog entry + (conditional) ADR for the shipped change
+  # 11. Tech Writer generates changelog entry + (conditional) ADR for the shipped change
   - name: release_docs
     type: tech_writer
     prompt: agents/release/tech-writer.md
@@ -190,7 +205,7 @@ stages:
       - docs/changelog_entry.md
       - docs/adr/
 
-  # 11. Conditional auto-resurvey: if release_docs flagged brief.md staleness
+  # 12. Conditional auto-resurvey: if release_docs flagged brief.md staleness
   #     via docs/maintenance_notes.md, re-invoke project-surveyor to refresh
   #     projects/<name>/brief.md. Skips silently (no LLM call, no cost) when
   #     no maintenance signal — typical case.

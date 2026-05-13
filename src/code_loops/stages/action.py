@@ -20,11 +20,13 @@ from ..runner import RunnerFactory
 from .auto_resurvey import run_auto_resurvey
 from .final_validation import run_final_validation
 from .prompt import StageContext
+from .regression_check import run_regression_check
 
 console = Console()
 
 _HANDLERS = {
     "final_validation": run_final_validation,
+    "regression_check": run_regression_check,
     "auto_resurvey": run_auto_resurvey,
 }
 

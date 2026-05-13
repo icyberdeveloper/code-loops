@@ -64,3 +64,28 @@ brief_file: brief.md
 #   enabled: true
 #   test_paths: [tests]
 #   lock_strategy: chmod_444_dir
+
+# OPTIONAL — Stage 9 regression gate. When enabled, after Stage 8
+# validation passes, code-loops runs `command` in the worktree, reads
+# the JSON written at `output_path`, and compares each metric against
+# the saved baseline at `projects/<name>/baselines/eval.json`. If any
+# metric drops > threshold_pct, Release Manager (Stage 10) blocks the
+# task with corrective_subtasks to restore quality.
+#
+# Contract: `command` must produce JSON at `output_path` shaped like
+#   {"<metric_name>": <number>, ...}
+# where higher numbers mean better. Example:
+#   {"recall_at_10": 0.92, "faithfulness": 0.88, "mrr": 0.71}
+#
+# First run with no baseline: code-loops captures current results as
+# the new baseline (writes baselines/eval.json) and passes. Commit
+# that file to version control if you want CI-reproducible regression
+# gates; gitignore it for local-only baselines.
+#
+# Disabled by default — opt in per-project when you have an eval suite.
+#
+# regression:
+#   enabled: true
+#   command: uv run pytest -m eval --json-report --json-report-file=tests/eval_results.json
+#   output_path: tests/eval_results.json
+#   threshold_pct: 5

@@ -15,6 +15,13 @@ The user message contains:
 - `=== validation/result.yaml ===` — programmatic check results.
 - `=== validation/coverage.md ===` — file coverage report (which
   RFC files were missing from diff).
+- `=== validation/regression.md ===` (OPTIONAL) — eval-benchmark
+  regression report. Present only when the project has
+  `regression.enabled: true` in `project.yaml`. If the report's first
+  line says `# Regression check: regression`, the bench dropped past
+  threshold — emit `needs_more_work` with a corrective subtask to
+  restore the regressed metric(s). If it says `pass` or
+  `baseline_captured`, the eval is fine.
 
 You have read access to the worktree at `task_dir/worktree/wt/` if you
 need to inspect more context, via Read / Grep / Glob.
