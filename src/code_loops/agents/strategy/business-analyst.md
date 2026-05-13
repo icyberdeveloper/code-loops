@@ -44,6 +44,62 @@ If the user pushes back on a default, ASK ONE clarifying question
 about that NFR before finalizing PRD. Don't ship a PRD with silently-
 assumed NFRs the user hasn't seen.
 
+## Evaluation criteria gate (MANDATORY for AI-touching tasks)
+
+If the task touches an AI surface (LLM call, classifier, RAG retrieval,
+ranker, validator, generative output, prompt file), the PRD MUST include
+a `## How we'll measure` section. Without it, downstream stages cannot
+build a baseline, regression-gate, or measure improvement after ship —
+the change is unmaintainable.
+
+If the task is non-AI (pure refactor, infra change, plumbing fix), this
+section is optional — write a one-line `## How we'll measure: N/A
+(non-AI surface)`.
+
+Required fields when present:
+
+- **Metric (multi-dim, never a single number):** the primary metric +
+  1-2 guard metrics. e.g. `primary: recall@10; guards: faithfulness,
+  latency_p95`. Single-metric obsession is a named anti-pattern — one
+  number rises while adjacent dimensions silently regress.
+- **Dataset source:** where labeled examples come from. Must be a real
+  path or an explicit subtask. Accepted values:
+  - real path: `<path/to/user-feedback-store>` (e.g. SQLite table with
+    ok/нок labels)
+  - `synthetic + edge cases` (with method)
+  - `needs dataset_curator subtask` (if storage exists but isn't yet
+    curated for this surface)
+  - `needs add_feedback_logging subtask` (if no feedback storage exists
+    for this surface at all — see below)
+- **Dataset size & composition:** N examples, positive / negative /
+  edge split (e.g. `N=30 starter: 10 positive / 10 negative / 10 edge,
+  expand to 100+ after first eval`).
+- **Baseline:** current metric value on this dataset BEFORE the change.
+  If unknown: `needs establish_baseline subtask`.
+- **Threshold for ship:** floor value the new code must meet (e.g.
+  `≥85% on golden / ≥70% on edge`). Tier the bands when meaningful.
+- **Failure cost:** what breaks for the user if the metric regresses
+  one tier. Drives how strict the threshold is. e.g. "wrong briefing
+  → user misses meeting agenda → calendar value lost".
+
+### Feedback infra check (very important)
+
+If the project's `{PROJECT_BRIEF}` documents a user-feedback storage
+(ok/нок ratings, thumb-up/down, "this was useful?" buttons, etc.) AND
+the proposed feature would EMIT new AI output to the user — the PRD
+MUST require the new feature to also write its feedback signal to that
+storage. Without this: the new surface ships uneval-able forever.
+
+If the project has NO feedback storage AT ALL for any AI surface — flag
+in PRD: `[ASSUMPTION] no production feedback channel exists; eval will
+rely on synthetic + curated examples for now. Recommend a follow-up
+task to add ok/нок logging across AI surfaces.`
+
+**Anti-pattern (forbidden):** "Define a single accuracy number with no
+dataset, no baseline, and no stated cost of regression." A PRD with
+`## How we'll measure: accuracy must be >90%` is REJECTED — that's eval
+theater, not measurable.
+
 ## Mode detection
 
 - If the input has sections like `## Problem`, `## What happened`, `## Symptoms`,

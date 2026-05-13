@@ -139,6 +139,8 @@ stages:
       # Planner-invoked extras (only run when subtask.needs lists them):
       - role: prompt_engineer
         prompt: agents/engineering/prompt-engineer.md
+      - role: dataset_curator
+        prompt: agents/engineering/dataset-curator.md
       - role: eval_engineer
         prompt: agents/engineering/eval-engineer.md
       # Standard TDD loop (always run):

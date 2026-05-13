@@ -142,6 +142,46 @@ Apply the 6-category AI-architecture audit systematically.
   summaries cycling back. RFC introducing any of these without an
   isolation/validation step → `MEDIUM`.
 
+### 7. Feedback-loop completeness (production maintainability)
+
+This category is **mandatory** for any RFC that adds a new AI surface
+the user will see (briefing output, recommendation, classification
+shown to user, generated content, ranked list). An AI feature without
+a feedback channel cannot be evaluated after ship, cannot be
+regression-tested from real usage, cannot be re-curated as the model
+or data drift. Shipping it is shipping unmaintainable code.
+
+- **No feedback signal at all → `BLOCKER`.** If `{PROJECT_BRIEF}`
+  documents an existing user-feedback storage (ok/нок ratings, thumb-
+  up/down, "was this useful?" buttons) AND the RFC adds a new AI
+  surface WITHOUT writing the equivalent signal into that storage on
+  the new surface → reject with BLOCKER. The fix: design MUST include
+  the feedback-write call site + storage schema field on the new
+  surface. Without this, the curator (Stage 7 pre-role) will hit
+  FEEDBACK_MISSING the moment someone tries to eval this code.
+- **No feedback storage anywhere → `HIGH` (project-wide gap).** If the
+  brief documents NO feedback storage for any AI surface, raise as a
+  `HIGH` project-wide concern — recommend RFC scope expand to add the
+  channel, OR a parallel infrastructure task be opened. Don't reject
+  the current RFC outright if the project has never had feedback infra
+  (greenfield), but flag clearly: this is the path to permanent
+  quality blindness.
+- **Feedback exists but isn't piped to eval → `MEDIUM`.** If feedback
+  storage exists AND new surface writes to it, but no path from that
+  storage to a `dataset_curator` subtask exists in the impl_plan → the
+  signal accumulates without ever becoming a regression baseline.
+  Recommend adding `dataset_curator` to `establish_baseline` subtask.
+
+Canonical principle (synthesized from evaluation-skills literature):
+"An AI feature without a feedback channel cannot be evaluated after
+ship, cannot be regression-tested, and cannot be re-curated from real
+usage. Build evaluation pipelines that run automatically on AI
+changes; that requires per-surface feedback signal as input."
+
+Anti-pattern (explicitly forbidden): "Ship a new LLM-touching feature
+whose only success signal is 'no exceptions thrown' and whose only
+quality channel is user-initiated bug reports."
+
 ## Severity levels
 
 - **CRITICAL**: design will cause production AI failure on first hit
@@ -188,7 +228,7 @@ Numbered list, at most {new_concerns_budget} new concerns plus any
 
 For each concern:
 - **Category**: model_selection / context_mgmt / rag / eval / prompt /
-  orchestration.
+  orchestration / feedback_loop.
 - **Severity**: critical / high / medium / low.
 - **Where**: cite the RFC section / paragraph.
 - **What**: state the AI-quality risk concretely. "§Proposed approach
@@ -206,7 +246,9 @@ present for RAG-generation surfaces.
 
 NEEDS_REVISION = at least one CRITICAL/HIGH concern, OR baseline
 measurement absent for AI-touching change, OR new RAG-generation surface
-without groundedness eval, OR embedding swap without re-embed plan.
+without groundedness eval, OR embedding swap without re-embed plan, OR
+new user-visible AI surface without feedback-write call to the project's
+existing feedback storage.
 ```
 
 ## Rules

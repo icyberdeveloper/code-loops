@@ -5,7 +5,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 > Multi-agent development pipeline orchestrator. Turns a one-line task
-> description into shipped, reviewed, documented code via 26 specialized
+> description into shipped, reviewed, documented code via 27 specialized
 > AI agents running through a deterministic Python pipeline.
 
 **Status:** Pre-1.0. Battle-tested on a personal Python project
@@ -31,7 +31,7 @@ Design Review→ Safety + Elegance + Hallucination + AI critics review;
 Impl Plan    → Tech Lead decomposes design into atomic, file-disjoint subtasks
                (TDD-ordered, dependency-aware, optional wave grouping)
 Implementation
-             → For each subtask: optional Prompt Engineer / Eval Engineer →
+             → For each subtask: optional Prompt Engineer / Dataset Curator / Eval Engineer →
                QA Engineer writes failing tests (locked chmod 444) →
                Software Engineer implements →
                Code Reviewer audits diff →
@@ -81,7 +81,7 @@ uv tool install git+https://github.com/icyberdeveloper/code-loops.git
 code-loops --help
 ```
 Now `code-loops` is on your `$PATH` everywhere. `pipeline.yaml` and the
-26 agent prompts ship inside the wheel as package data.
+27 agent prompts ship inside the wheel as package data.
 
 ### Option 2: clone for development
 ```bash
@@ -184,7 +184,7 @@ code-loops/
 ├── pyproject.toml          # package metadata + `code-loops` entry point
 ├── src/code_loops/         # the package (ships in the wheel as installed data)
 │   ├── pipeline.yaml       #   ⭐ stage definitions (12 stages, types, role bindings)
-│   ├── agents/             #   26 agent prompts in 6 family folders:
+│   ├── agents/             #   27 agent prompts in 6 family folders:
 │   │   ├── strategy/       #     business-analyst, tech-lead
 │   │   ├── research/       #     research-lead + 5 researchers
 │   │   ├── architects/     #     software-architect + 7 architect-* (perspective, arbiters, 4 critics)
@@ -374,7 +374,7 @@ Reports land at `_eval/report_<timestamp>.md`.
 
 **Done**:
 - Full 12-stage pipeline with auto-loops (redesign_needed, needs_more_work, auto-resurvey) and conditional regression gate
-- 26 agents in 6 families with `{PROJECT_BRIEF}` injection
+- 27 agents in 6 families with `{PROJECT_BRIEF}` injection
 - Configurable test infrastructure (Python `tests/` default; pluggable)
 - `init` / `resurvey` / `projects` / `eval` CLI commands
 - 195 pytest tests covering orchestrator + worktree + agents

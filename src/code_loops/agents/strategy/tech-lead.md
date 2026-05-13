@@ -160,6 +160,13 @@ stage):
   FORMAT / EXAMPLES / CONSTRAINTS / FALLBACK), few-shot examples,
   schema-constrained output. Use when subtask **creates or modifies a
   file in the project's prompts directory** (see brief).
+- **`dataset_curator`** — pulls labeled examples from the project's
+  user-feedback storage (read-only) and writes `tests/eval_data/<sid>.jsonl`
+  for the eval-engineer to grade against. If no feedback storage exists
+  for this surface, emits `FEEDBACK_MISSING` and proposes
+  `add_feedback_logging` as a prerequisite corrective subtask. Use when
+  subtask **needs real labeled data, not synthetic** — typical for
+  retroactive eval setup on existing AI features.
 - **`eval_engineer`** — defines golden dataset + quality assertions for
   AI-touching subtasks BEFORE implementation (EDD principle). Use when
   subtask touches **LLM call paths, RAG retrieval, validators,
@@ -185,11 +192,55 @@ LLM-touching feature.
   add `eval_engineer` to `needs`. Eval-engineer creates
   `tests/integration/<sid>_eval.py` with golden pairs;
   test_writer writes complementary unit tests; coder implements.
+- Subtask needs **real labeled data from production user feedback** (not
+  just synthetic eval pairs) → add `dataset_curator` BEFORE
+  `eval_engineer` in `needs`: `needs: [dataset_curator, eval_engineer]`.
+  Curator reads the project's feedback storage and writes
+  `tests/eval_data/<sid>.jsonl`; eval-engineer grades against it.
 - Subtask is pure refactor / domain-only / non-AI infra → omit `needs`
   field entirely. Only standard 4 roles run.
 - Don't list pre-roles speculatively — every entry costs an LLM call
   (~\$0.20 each at Opus). Only when the subtask genuinely needs the
   specialist's output as a prerequisite for test_writer / coder.
+
+## Eval-first ordering rule (HARD)
+
+If the RFC touches an AI surface (LLM call, classifier, retrieval,
+ranker, generative output) AND no existing eval covers this surface
+(check research/ai.md or research/codebase.md output for what already
+exists), the FIRST subtask in the plan MUST be `establish_baseline`:
+
+```
+- id: 00_establish_baseline
+  title: Establish eval baseline before any code change
+  needs: [dataset_curator, eval_engineer]
+  files:
+    create:
+      - tests/eval_data/<surface>.jsonl
+      - tests/integration/test_<surface>_eval.py
+  spec_md: |
+    1. dataset_curator builds golden set from feedback storage (or
+       emits FEEDBACK_MISSING + corrective subtask if missing).
+    2. eval_engineer writes the eval harness against that dataset.
+    3. test_writer ensures bench runs and produces JSON output at
+       the path configured in project.yaml regression.output_path.
+    4. coder ONLY measures + records baseline value to
+       projects/<name>/baselines/eval.json. NO production code changes
+       this subtask.
+    5. Acceptance: bench runs green, baseline file exists.
+  uncertainty: low
+```
+
+Only AFTER this subtask are code-change subtasks allowed in the plan.
+
+Rationale (eval-harness skill): "Define expected behavior BEFORE
+implementation". Workflow is `Define → Implement → Evaluate → Report`,
+not the reverse. Shipping AI code without a prior baseline IS shipping
+regression debt — there's no signal to detect it later.
+
+**Anti-pattern (forbidden):** beginning implementation subtasks for an
+AI surface while the eval / baseline subtask is "TBD" or "we'll add
+later". Eval debt = silent regression debt.
 
 If a subtask has BOTH a new prompt AND new LLM call (typical for new
 LLM-driven feature): `needs: [prompt_engineer, eval_engineer]` —
