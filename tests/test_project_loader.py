@@ -50,14 +50,20 @@ def test_resolve_autoselects_single_project(monkeypatch, tmp_path):
     assert _resolve_path(None, name=None) == fake_projects / "only_one" / "project.yaml"
 
 
-def test_resolve_returns_none_when_multi_project_no_explicit(monkeypatch, tmp_path):
+def test_resolve_raises_when_multi_project_no_explicit(monkeypatch, tmp_path):
+    """Multi-project without explicit choice = loud error, not silent None.
+
+    Before this fix: returned None silently, caused agents to run without
+    {PROJECT_BRIEF} during Step 10's first production run.
+    """
     monkeypatch.delenv("CODE_LOOPS_PROJECT", raising=False)
     fake_projects = tmp_path / "projects"
     for n in ("a", "b"):
         (fake_projects / n).mkdir(parents=True)
         (fake_projects / n / "project.yaml").write_text("project:\n  name: x\n")
     monkeypatch.setattr(project_loader, "PROJECTS_DIR", fake_projects)
-    assert _resolve_path(None, name=None) is None
+    with pytest.raises(ValueError, match="Multiple projects configured"):
+        _resolve_path(None, name=None)
 
 
 def test_resolve_returns_none_when_projects_dir_missing(monkeypatch, tmp_path):

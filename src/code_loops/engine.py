@@ -32,7 +32,7 @@ console = Console()
 
 # After this many redesign loops we stop trying — fall through forward with a
 # marker rather than infinite-loop. Counter persists in meta.yaml.
-MAX_REDESIGN_LOOPS = 1
+MAX_REDESIGN_LOOPS = 3
 
 # After this many final-review correction loops we stop trying. Each loop appends
 # corrective subtasks and re-runs subtask_iterator + final_validation + final_review.

@@ -68,13 +68,23 @@ def _resolve_path(path: Path | None, name: str | None) -> Path | None:
     env = os.environ.get("CODE_LOOPS_PROJECT")
     if env:
         return Path(env)
-    # Auto: single-project default
+    # Auto: single-project default. Multi-project requires explicit choice —
+    # silently degrading to "no project" caused agents to run without
+    # {PROJECT_BRIEF} during Step 10's first production run; loud error here
+    # surfaces the ambiguity at startup instead of mid-pipeline.
     if PROJECTS_DIR.is_dir():
         candidates = sorted(
             d for d in PROJECTS_DIR.iterdir() if d.is_dir() and (d / "project.yaml").exists()
         )
         if len(candidates) == 1:
             return candidates[0] / "project.yaml"
+        if len(candidates) > 1:
+            names = ", ".join(c.name for c in candidates)
+            raise ValueError(
+                f"Multiple projects configured ({names}) and no --project / "
+                f"--project-config / $CODE_LOOPS_PROJECT specified. Pass one "
+                f"explicitly so agents get the correct {{PROJECT_BRIEF}}."
+            )
     return None
 
 
