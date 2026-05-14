@@ -23,7 +23,7 @@ def _new_manifest(tmp_path: Path) -> Manifest:
 
 
 def test_init_task_writes_schema(tmp_path):
-    m = _new_manifest(tmp_path)
+    _new_manifest(tmp_path)
     saved = json.loads((tmp_path / "manifest.json").read_text())
     assert saved["schema_version"] == SCHEMA_VERSION
     assert saved["task_id"] == "0001_test"
