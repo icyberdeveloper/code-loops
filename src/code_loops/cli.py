@@ -355,6 +355,16 @@ def run(
             "the autoselect behavior)."
         ),
     ),
+    from_stage: str = typer.Option(
+        None,
+        "--from-stage",
+        help=(
+            "Force-restart from this stage (clears its done-marker and all "
+            "downstream stages in meta.yaml). Use after a manual edit to a "
+            "stage's output, or to recover from `redesign_loops_exceeded` "
+            "by running `--from-stage impl_plan`."
+        ),
+    ),
 ):
     """Run / resume a task through the pipeline."""
     task_dir = TASKS_DIR / task_id
@@ -366,6 +376,7 @@ def run(
         task_dir,
         project_config_path=project_config_path,
         project_name=project,
+        from_stage=from_stage,
     ).run()
 
 

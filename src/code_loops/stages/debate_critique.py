@@ -100,6 +100,7 @@ class DebateCritiqueStage:
                     task_md=task_md,
                     round_n=round_n,
                     max_rounds=max_rounds,
+                    redesign_signal=_read_redesign_signal(ctx.task_dir),
                 )
             )
             for name, cr in zip(critic_names, critic_results, strict=True):
@@ -261,6 +262,19 @@ class DebateCritiqueStage:
         }
 
 
+def _read_redesign_signal(task_dir: Path) -> str | None:
+    """Read design/redesign_signal.md if this is a post-redesign-loop critique pass.
+
+    Presence of this file means the engine bubbled back from a prior
+    design_review's `redesign_needed` verdict. Critics in this pass should
+    know what theme triggered the redesign so they can verify the structural
+    fix landed (rather than evaluating the new RFC from scratch with no
+    memory of what was wrong before).
+    """
+    p = task_dir / "design" / "redesign_signal.md"
+    return p.read_text() if p.exists() else None
+
+
 async def _run_critics(
     *,
     critic_runners: list[ClaudeRunner],
@@ -270,9 +284,28 @@ async def _run_critics(
     task_md: str,
     round_n: int,
     max_rounds: int,
+    redesign_signal: str | None = None,
 ) -> list[RunnerResult]:
     task_brief = "\n".join(task_md.splitlines()[:6])
     budget = _new_concerns_budget(round_n, max_rounds)
+
+    # Post-redesign-loop critics get the prior verdict's signal + guidance.
+    # Otherwise (first design_review pass) this block is empty.
+    redesign_block = ""
+    if redesign_signal:
+        redesign_block = (
+            "=== prior_attempt_summary (this is a post-redesign-loop critique pass) ===\n"
+            "The previous RFC was rejected by this review board. The architects "
+            "rewrote it under the guidance below. Your job:\n"
+            "  - Verify the structural fix actually landed (don't relitigate "
+            "concerns the new RFC plausibly addressed).\n"
+            "  - Apply your own fresh lens for new issues introduced by the "
+            "restructure.\n"
+            "  - If the recurring_theme below is still visible in the new RFC, "
+            "that's a strong signal to escalate severity.\n\n"
+            f"{redesign_signal}\n\n"
+        )
+
     tasks = []
     for runner, prompt_text, name in zip(critic_runners, critic_prompts, critic_names, strict=True):
         sys_prompt = (
@@ -282,6 +315,7 @@ async def _run_critics(
         )
         user_msg = (
             f"=== task brief ===\n{task_brief}\n\n"
+            f"{redesign_block}"
             f"=== current rfc ===\n{current_rfc}\n\n"
             f"You are the **{name}** critic in round {round_n} of {max_rounds}. "
             f"Your new-concerns budget this round is {budget}. Critique from your "

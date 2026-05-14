@@ -39,6 +39,35 @@ MAX_REDESIGN_LOOPS = 3
 MAX_FINAL_LOOPS = 5
 
 
+def _stage_names(pipeline: dict) -> list[str]:
+    return [s["name"] for s in pipeline.get("stages", [])]
+
+
+def _archive_design_artifacts(task_dir: Path, prev_pass: int) -> None:
+    """Move just-completed design + design_review artifacts into pass_<N>/ subdirs.
+
+    Called before engine re-enters the design stage on a redesign loop.
+    Preserves forensic trail of every pass instead of overwriting drafts /
+    debate / verdict files when the next pass writes to the same paths.
+
+    Files NOT archived (intentionally — they're inputs for the next pass):
+      - design/redesign_signal.md (new pass's writer reads this)
+      - design/previous_rfc.md    (new pass's writer reads this)
+    """
+    for stage_dirname in ("design", "design_review"):
+        stage_dir = task_dir / stage_dirname
+        if not stage_dir.is_dir():
+            continue
+        archive = stage_dir / f"pass_{prev_pass}"
+        archive.mkdir(parents=True, exist_ok=True)
+        for entry in list(stage_dir.iterdir()):
+            if entry.is_dir():
+                continue  # skip nested pass_N/ dirs
+            if entry.name in {"redesign_signal.md", "previous_rfc.md"}:
+                continue  # inputs for next pass — keep at top level
+            entry.rename(archive / entry.name)
+
+
 class EngineError(RuntimeError):
     pass
 
@@ -49,11 +78,14 @@ class Engine:
         task_dir: Path,
         project_config_path: Path | None = None,
         project_name: str | None = None,
+        from_stage: str | None = None,
     ):
         self.task_dir = task_dir
         self.meta = MetaStore(task_dir / "meta.yaml")
         self.pipeline = yaml.safe_load((PACKAGE_DIR / "pipeline.yaml").read_text())
         self._apply_defaults()
+        if from_stage:
+            self._reset_from_stage(from_stage)
         self.project_config = load_project_config(project_config_path, name=project_name)
         if self.project_config:
             project_name_log = (self.project_config.get("project") or {}).get("name", "?")
@@ -101,6 +133,25 @@ class Engine:
                             if isinstance(sub, dict):
                                 for k, v in defaults.items():
                                     sub.setdefault(k, v)
+
+    def _reset_from_stage(self, from_stage: str) -> None:
+        """Mark all stages from `from_stage` onwards as not-done.
+
+        Used to force-resume from a specific stage (e.g. after manual edit
+        of design/final.md, run `code-loops run <task> --from-stage impl_plan`
+        to re-run impl_plan and downstream without retracing prd/research/design).
+        """
+        names = _stage_names(self.pipeline)
+        if from_stage not in names:
+            raise EngineError(f"--from-stage {from_stage!r} not in pipeline. Valid stages: {names}")
+        idx = names.index(from_stage)
+        for name in names[idx:]:
+            self.meta.reset_stage(name)
+        self.meta.set_status("in_progress")
+        console.print(
+            f"[bold yellow]↻ resume from `{from_stage}` — "
+            f"reset {len(names) - idx} downstream stage(s) in meta[/bold yellow]"
+        )
 
     def run(self) -> None:
         stages = self.pipeline["stages"]
@@ -173,13 +224,19 @@ class Engine:
                 loop_n = self.meta.increment_redesign_loop()
                 if loop_n > MAX_REDESIGN_LOOPS:
                     console.print(
-                        f"[bold yellow]↯ redesign loops exhausted ({loop_n}/{MAX_REDESIGN_LOOPS}); "
-                        "falling through with marker[/bold yellow]"
+                        f"[bold red]↯ redesign loops exhausted ({loop_n}/{MAX_REDESIGN_LOOPS})[/bold red]\n"
+                        f"[red]Aborting before downstream stages corrupt with bad design.[/red]\n"
+                        f"[yellow]Options to resume:[/yellow]\n"
+                        f"  1. Manually edit `{self.task_dir}/design/final.md` to fix the design,\n"
+                        f"     then `code-loops run {self.task_dir.name} --from-stage impl_plan`\n"
+                        f"  2. Bump MAX_REDESIGN_LOOPS in code_loops/engine.py and re-run\n"
+                        f"  3. `code-loops cancel {self.task_dir.name}` to discard"
                     )
                     self.meta.set_status("redesign_loops_exceeded")
-                    # Continue forward — downstream stages run on the latest RFC
-                    i += 1
-                    continue
+                    raise EngineError(
+                        f"redesign_loops_exceeded ({loop_n}/{MAX_REDESIGN_LOOPS}). "
+                        f"See log above for resume options."
+                    )
 
                 # Find design stage index and rewind to it. Reset design + design_review state.
                 rfc_idx = next(
@@ -197,6 +254,10 @@ class Engine:
                     f"theme=`{result.get('recurring_theme', 'unknown')}` — "
                     "rewinding to design stage with redesign_signal.md[/bold yellow]"
                 )
+                # Archive artifacts of just-completed pass before re-running.
+                # Pass numbering: loop_n=1 means we've just finished pass 1 and
+                # are about to start pass 2 → archive into design/pass_1/.
+                _archive_design_artifacts(self.task_dir, prev_pass=loop_n)
                 self.meta.reset_stage("design")
                 self.meta.reset_stage(name)  # also reset design_review itself
                 i = rfc_idx
