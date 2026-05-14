@@ -281,6 +281,8 @@ class SubtaskIteratorStage:
                 # Subtask done — commit code (unlock for git mv etc.)
                 wt.unlock_tests(test_paths=test_paths, strategy=lock_strategy)
                 console.print(f"  [green]✓ subtask {sid}[/green] passed all checks")
+                if ctx.artifact_writer is not None:
+                    ctx.artifact_writer.manifest.set_subtask_final(sid, outcome="shipped")
                 return cost_total, False
 
             # Failure — assemble failure_input + ask fix_router
@@ -311,6 +313,8 @@ class SubtaskIteratorStage:
 
             if target == "escalate_design" or target_attempts_used >= MAX_ATTEMPTS_PER_TARGET:
                 wt.unlock_tests(test_paths=test_paths, strategy=lock_strategy)
+                if ctx.artifact_writer is not None:
+                    ctx.artifact_writer.manifest.set_subtask_final(sid, outcome="escalated")
                 raise DesignEscalation(
                     subtask_id=sid,
                     reason=route["reason"],

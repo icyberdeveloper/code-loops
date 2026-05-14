@@ -59,7 +59,19 @@ class DebateCritiqueStage:
 
         out_dir = ctx.task_dir / "design_review"
         out_dir.mkdir(parents=True, exist_ok=True)
-        debate_path = out_dir / "debate.md"
+
+        # Per-pass scoping — when ArtifactWriter is present, scope all
+        # per-round artifacts under design_review/pass_<N>/. Pass number
+        # mirrors the redesign loop counter (post-redesign re-run = pass 2).
+        if ctx.artifact_writer is not None:
+            pass_n = ctx.artifact_writer.manifest.data.get("redesign_loop_count", 0) + 1
+            work_dir = out_dir / f"pass_{pass_n}"
+        else:
+            pass_n = 1
+            work_dir = out_dir
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        debate_path = work_dir / "debate.md"
         debate_path.write_text("# Critique Debate\n")
 
         rfc_path = ctx.task_dir / "design" / "final.md"
@@ -105,10 +117,11 @@ class DebateCritiqueStage:
             )
             for name, cr in zip(critic_names, critic_results, strict=True):
                 cost_total += cr.cost_usd or 0
-                # Per-round critic snapshot
-                (out_dir / f"{name}_v{round_n}.md").write_text(cr.text)
-                # Stable "latest" pointer
-                (out_dir / f"{name}.md").write_text(cr.text)
+                # Per-round critic snapshot inside this pass
+                (work_dir / f"{name}_v{round_n}.md").write_text(cr.text)
+                # Stable "latest" pointer at pass-level (overwrites each round
+                # within pass, NOT across passes since work_dir is pass-scoped)
+                (work_dir / f"{name}.md").write_text(cr.text)
                 _append_debate(debate_path, f"Round {round_n} — critic: {name}", cr.text)
             crit_cost = sum((cr.cost_usd or 0) for cr in critic_results)
             crit_max_dur = max((cr.duration_s for cr in critic_results), default=0)
@@ -187,7 +200,7 @@ class DebateCritiqueStage:
             cost_total += revise_result.cost_usd or 0
             rfc_version += 1
             current_rfc = revise_result.text
-            (out_dir / f"rfc_revision_v{rfc_version}.md").write_text(current_rfc)
+            (work_dir / f"rfc_revision_v{rfc_version}.md").write_text(current_rfc)
             _append_debate(
                 debate_path,
                 f"Round {round_n} — Responder revision (rfc_v{rfc_version})",
@@ -203,7 +216,6 @@ class DebateCritiqueStage:
         if rfc_version > 1:
             rfc_path.write_text(current_rfc)
 
-        verdict_path = out_dir / "verdict.md"
         verdict_lines = [
             f"# Verdict: {verdict_status}",
             "",
@@ -221,7 +233,23 @@ class DebateCritiqueStage:
                 "",
                 design_guidance,
             ]
-        verdict_path.write_text("\n".join(verdict_lines) + "\n")
+        verdict_md = "\n".join(verdict_lines) + "\n"
+        # Per-pass copy + flat copy (downstream Release Manager reads flat).
+        (work_dir / "verdict.md").write_text(verdict_md)
+        verdict_path = out_dir / "verdict.md"
+        verdict_path.write_text(verdict_md)
+        # Record pass in manifest (forensic detail).
+        if ctx.artifact_writer is not None:
+            ctx.artifact_writer.manifest.record_pass(
+                "design_review",
+                pass_n,
+                cost_usd=cost_total,
+                duration_s=time.monotonic() - wall_start,
+                rounds=min(round_n, max_rounds),
+                verdict=verdict_status,
+                theme=recurring_theme or None,
+            )
+            ctx.artifact_writer.manifest.set_latest("design_review", "design_review/verdict.md")
 
         # Write redesign_signal.md if redesign_needed — picked up by next rfc run
         if verdict_status == "redesign_needed":

@@ -58,7 +58,20 @@ class DebateWriterStage:
         roles = normalize_roles(stage_def["roles"])
         out_dir = ctx.task_dir / "design"
         out_dir.mkdir(parents=True, exist_ok=True)
-        debate_path = out_dir / "debate.md"
+
+        # Per-pass scoping (Step 9.40 Phase 2c). When ArtifactWriter is set,
+        # all per-round artifacts (drafts, debate.md) live under
+        # `design/pass_<N>/` so a redesign loop's pass 2 doesn't overwrite
+        # pass 1's intermediate state. Legacy callers (no aw) write flat.
+        if ctx.artifact_writer is not None:
+            pass_n = ctx.artifact_writer.manifest.data.get("redesign_loop_count", 0) + 1
+            work_dir = out_dir / f"pass_{pass_n}"
+        else:
+            pass_n = 1
+            work_dir = out_dir
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        debate_path = work_dir / "debate.md"
         debate_path.write_text("# RFC Debate\n")
 
         plan_md = (ctx.task_dir / "research_plan" / "plan.md").read_text()
@@ -128,7 +141,7 @@ class DebateWriterStage:
         result = writer_runner.run(writer_sys, initial_msg)
         cost_total += result.cost_usd or 0
         draft_version = 1
-        draft_path = out_dir / f"draft_v{draft_version}.md"
+        draft_path = work_dir / f"draft_v{draft_version}.md"
         draft_path.write_text(result.text)
         _append_debate(debate_path, "Round 0 — Writer initial draft (v1)", result.text)
         console.print(
@@ -212,7 +225,7 @@ class DebateWriterStage:
             revise_result = writer_runner.run(writer_sys, revise_msg)
             cost_total += revise_result.cost_usd or 0
             draft_version += 1
-            draft_path = out_dir / f"draft_v{draft_version}.md"
+            draft_path = work_dir / f"draft_v{draft_version}.md"
             draft_path.write_text(revise_result.text)
             _append_debate(
                 debate_path,
@@ -225,21 +238,40 @@ class DebateWriterStage:
             )
 
         # ---- Finalize ----
-        final_path = out_dir / "final.md"
-        final_path.write_text(draft_path.read_text())
+        # Per-pass final.md AND flat design/final.md for downstream stages.
+        final_content = draft_path.read_text()
+        pass_final_path = work_dir / "final.md"
+        pass_final_path.write_text(final_content)
+        flat_final_path = out_dir / "final.md"
+        flat_final_path.write_text(final_content)
         wall_duration = time.monotonic() - wall_start
+        rounds_done = draft_version - 1 if converged else max_rounds
+
+        # Record pass in manifest (forensic per-pass detail).
+        if ctx.artifact_writer is not None:
+            ctx.artifact_writer.manifest.record_pass(
+                "design",
+                pass_n,
+                cost_usd=cost_total,
+                duration_s=wall_duration,
+                rounds=rounds_done,
+                converged=converged,
+                max_rounds_reached=(not converged and rounds_done == max_rounds),
+                final_artifact=f"design/pass_{pass_n}/final.md",
+            )
+            ctx.artifact_writer.manifest.set_latest("design", "design/final.md")
 
         outputs: dict[str, str] = {
             f"design/draft_v{draft_version}.md": draft_path.read_text(),
             "design/debate.md": debate_path.read_text(),
-            "design/final.md": final_path.read_text(),
+            "design/final.md": final_content,
         }
         return {
             "outputs": outputs,
             "cost_usd": cost_total,
             "duration_s": wall_duration,
             "converged": converged,
-            "rounds": draft_version - 1 if converged else max_rounds,
+            "rounds": rounds_done,
         }
 
 

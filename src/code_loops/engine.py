@@ -196,6 +196,7 @@ class Engine:
                 and result.get("verdict") == "needs_more_work"
             ):
                 loop_n = self.meta.increment_final_loop()
+                self.manifest.increment_final_loop()
                 corrective = result.get("corrective_subtasks", []) or []
                 if loop_n > MAX_FINAL_LOOPS:
                     console.print(
@@ -244,6 +245,7 @@ class Engine:
                 and result.get("verdict") == "redesign_needed"
             ):
                 loop_n = self.meta.increment_redesign_loop()
+                self.manifest.increment_redesign_loop()
                 if loop_n > MAX_REDESIGN_LOOPS:
                     console.print(
                         f"[bold red]↯ redesign loops exhausted ({loop_n}/{MAX_REDESIGN_LOOPS})[/bold red]\n"

@@ -65,15 +65,31 @@ class ArtifactWriter:
         self._set_latest_copy(stage, name, content)
         return scoped
 
-    def write_pass(self, stage: str, pass_n: int, name: str, content: str) -> Path:
+    def write_pass(
+        self,
+        stage: str,
+        pass_n: int,
+        name: str,
+        content: str,
+        *,
+        latest: bool = True,
+    ) -> Path:
         """Per-redesign-pass artifact (e.g. design pass_1 vs pass_2 final).
 
-        Writes to `<task>/<stage>/pass_<N>/<name>` AND copies to
-        `<task>/<stage>/<name>` as latest.
+        Writes to `<task>/<stage>/pass_<N>/<name>`. When `latest=True`
+        (default), also copies to `<task>/<stage>/<name>` so downstream
+        stages reading the legacy flat path see the latest pass's content.
+
+        Set `latest=False` for intermediate per-pass artifacts (drafts,
+        round outputs) where flat copying would mean pass 2's `draft_v1.md`
+        overwrites pass 1's `draft_v1.md` — the exact bug per-pass scoping
+        is meant to prevent. For those, only the pass-scoped path is the
+        source of truth.
         """
         scoped = self.task_dir / stage / f"pass_{pass_n}" / name
         self._write(scoped, content)
-        self._set_latest_copy(stage, name, content)
+        if latest:
+            self._set_latest_copy(stage, name, content)
         return scoped
 
     def write_round(

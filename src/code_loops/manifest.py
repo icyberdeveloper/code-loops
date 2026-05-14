@@ -241,6 +241,20 @@ class Manifest:
             entry["files_changed"] = files_changed
         self._save()
 
+    # ---- Loop counters (mirror MetaStore for engine sync) ----
+
+    def increment_redesign_loop(self) -> int:
+        n = (self._data.get("redesign_loop_count") or 0) + 1
+        self._data["redesign_loop_count"] = n
+        self._save()
+        return n
+
+    def increment_final_loop(self) -> int:
+        n = (self._data.get("final_loop_count") or 0) + 1
+        self._data["final_loop_count"] = n
+        self._save()
+        return n
+
     # ---- "Latest" pointer tracking ----
 
     def set_latest(self, stage: str, relative_path: str) -> None:
