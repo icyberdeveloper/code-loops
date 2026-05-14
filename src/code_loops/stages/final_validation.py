@@ -39,6 +39,8 @@ FILE_LINE_RE = re.compile(
 def run_final_validation(stage_def: dict, ctx: StageContext) -> dict:
     out_dir = ctx.task_dir / "validation"
     out_dir.mkdir(parents=True, exist_ok=True)
+    if ctx.artifact_writer is not None:
+        ctx.artifact_writer.manifest.set_latest("validation", "validation/result.yaml")
     wall_start = time.monotonic()
 
     rfc_files = _parse_rfc_files(ctx.task_dir / "design" / "final.md")

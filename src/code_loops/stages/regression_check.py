@@ -46,6 +46,9 @@ console = Console()
 def run_regression_check(stage_def: dict, ctx: StageContext) -> dict:
     cfg = get_regression_config(ctx.project_config)
 
+    if ctx.artifact_writer is not None:
+        ctx.artifact_writer.manifest.set_latest("regression_check", "validation/regression.md")
+
     if not cfg["enabled"]:
         console.print("  [dim]regression_check:[/dim] disabled in project config → skip")
         return _skipped("regression.enabled=false")

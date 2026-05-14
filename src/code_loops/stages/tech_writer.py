@@ -73,6 +73,12 @@ class TechWriterStage:
             "written" if maintenance_notes else "no maintenance signal (brief stays accurate)"
         )
 
+        # Record latest pointers in manifest (stage_name `release_docs` writes
+        # to docs/ rather than release_docs/, so manifest.latest just points
+        # at the canonical file path).
+        if ctx.artifact_writer is not None:
+            ctx.artifact_writer.manifest.set_latest("release_docs", "docs/changelog_entry.md")
+
         wall_duration = time.monotonic() - wall_start
         console.print(
             f"  [dim]release_docs:[/dim] changelog written; "

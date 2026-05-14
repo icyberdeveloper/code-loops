@@ -111,3 +111,34 @@ def test_prompt_stage_missing_input_raises(repo, task_dir):
     }
     with pytest.raises(FileNotFoundError):
         stage.run(stage_def, ctx)
+
+
+def test_prompt_stage_writes_via_artifact_writer_when_provided(repo, task_dir):
+    """When ctx.artifact_writer is set, stage uses it (manifest gets latest pointer)."""
+    from code_loops.artifact_writer import ArtifactWriter
+    from code_loops.manifest import Manifest
+
+    runner = FakeRunner("# PRD content\n\nbody")
+    stage = PromptStage(FakeFactory(runner))
+    manifest = Manifest(task_dir / "manifest.json")
+    manifest.init_task("0001_t", mode="feature")
+    aw = ArtifactWriter(task_dir, manifest)
+    ctx = StageContext(
+        task_dir=task_dir,
+        prompts_dir=repo / "agents",
+        repo_root=repo,
+        artifact_writer=aw,
+    )
+    stage_def = {
+        "name": "prd",
+        "type": "prompt",
+        "prompt": "agents/fake_writer.md",
+        "inputs": ["task.md"],
+        "outputs": ["prd/prd.md"],
+    }
+    stage.run(stage_def, ctx)
+
+    # File written
+    assert (task_dir / "prd" / "prd.md").read_text() == "# PRD content\n\nbody"
+    # Manifest updated with latest pointer
+    assert manifest.data["stages"]["prd"]["latest"] == "prd/prd.md"

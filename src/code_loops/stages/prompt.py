@@ -53,10 +53,20 @@ class PromptStage:
         result = runner.run(system_prompt, user_message)
 
         outputs: dict[str, str] = {}
+        stage_name = stage_def["name"]
         for rel in stage_def["outputs"]:
-            target = ctx.task_dir / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(result.text)
+            # rel is "<dir>/<name>" — split into ArtifactWriter scoping.
+            # When dir == stage_name (typical: prd/prd.md, research_plan/plan.md),
+            # write_simple updates manifest.set_latest correctly.
+            parts = rel.split("/", 1)
+            if len(parts) == 2 and ctx.artifact_writer is not None:
+                stage_dir, name = parts
+                ctx.artifact_writer.write_simple(stage_dir, name, result.text)
+            else:
+                # Fallback: legacy direct write (no manifest).
+                target = ctx.task_dir / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(result.text)
             outputs[rel] = result.text
             break  # v0.1: single-artifact only
 

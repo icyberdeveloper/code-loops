@@ -36,9 +36,15 @@ class ParallelStage:
         max_duration = 0.0
         for branch_def, result in zip(branches, results, strict=True):
             for rel in branch_def["outputs"]:
-                target = ctx.task_dir / rel
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(result.text)
+                # rel is e.g. "research/codebase.md" — scope under stage dir.
+                parts = rel.split("/", 1)
+                if len(parts) == 2 and ctx.artifact_writer is not None:
+                    stage_dir, name = parts
+                    ctx.artifact_writer.write_simple(stage_dir, name, result.text)
+                else:
+                    target = ctx.task_dir / rel
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(result.text)
                 outputs[rel] = result.text
                 break  # v0.1: single artifact per branch
             total_cost += result.cost_usd or 0
