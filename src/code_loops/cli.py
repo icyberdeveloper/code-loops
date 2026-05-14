@@ -384,18 +384,123 @@ def run(
 
 @app.command()
 def status(task_id: str):
-    """Show task status."""
+    """Show task status — rich per-stage breakdown from manifest.json."""
     task_dir = TASKS_DIR / task_id
     if not task_dir.exists():
         console.print(f"[red]Task not found: {task_id}[/red]")
         raise typer.Exit(1)
-    meta = MetaStore(task_dir / "meta.yaml")
-    d = meta.data
+
+    # Prefer manifest.json (richer); fall back to meta.yaml for legacy tasks.
+    manifest_path = task_dir / "manifest.json"
+    if manifest_path.exists():
+        d = Manifest(manifest_path).data
+        _render_status_from_manifest(d)
+    else:
+        d = MetaStore(task_dir / "meta.yaml").data
+        _render_status_legacy(d)
+
+
+def _render_status_from_manifest(d: dict) -> None:
+    total = d.get("total_cost_usd", 0)
     console.print(
-        f"[bold cyan]{d.get('task_id')}[/bold cyan]  status={d.get('status')}  cost=${d.get('cost_usd', 0):.4f}"
+        f"[bold cyan]{d.get('task_id')}[/bold cyan]  status={d.get('status')}  cost=${total:.4f}"
     )
     console.print(f"  mode: {d.get('mode')}")
     console.print(f"  current_stage: {d.get('current_stage')}")
+    if d.get("redesign_loop_count"):
+        console.print(f"  redesign_loops: {d['redesign_loop_count']}")
+    if d.get("final_loop_count"):
+        console.print(f"  final_review_loops: {d['final_loop_count']}")
+
+    table = Table(show_header=True, header_style="bold", title="Stages")
+    table.add_column("stage")
+    table.add_column("status")
+    table.add_column("passes", justify="right")
+    table.add_column("attempts", justify="right")
+    table.add_column("duration", justify="right")
+    table.add_column("cost", justify="right")
+    table.add_column("latest")
+    for name, st in (d.get("stages") or {}).items():
+        passes_count = st.get("passes_count", "")
+        attempts_count = st.get("attempts_count", "")
+        duration = st.get("duration_s")
+        cost = st.get("cost_usd")
+        table.add_row(
+            name,
+            str(st.get("status", "")),
+            str(passes_count or ""),
+            str(attempts_count or ""),
+            f"{duration:.1f}s" if duration else "",
+            f"${cost:.4f}" if cost else "",
+            str(st.get("latest", "")),
+        )
+    console.print(table)
+
+    # Per-pass breakdown for stages with iteration history
+    for stage_name, st in (d.get("stages") or {}).items():
+        passes = st.get("passes") or []
+        if passes:
+            sub = Table(show_header=True, header_style="bold", title=f"{stage_name} — passes")
+            sub.add_column("pass", justify="right")
+            sub.add_column("rounds", justify="right")
+            sub.add_column("converged")
+            sub.add_column("verdict")
+            sub.add_column("theme")
+            sub.add_column("cost", justify="right")
+            for p in passes:
+                sub.add_row(
+                    str(p.get("pass_n", "")),
+                    str(p.get("rounds", "")),
+                    str(p.get("converged", "")),
+                    str(p.get("verdict", "")),
+                    str(p.get("theme", "")),
+                    f"${p.get('cost_usd', 0):.4f}",
+                )
+            console.print(sub)
+
+        attempts = st.get("attempts") or []
+        if attempts:
+            sub = Table(show_header=True, header_style="bold", title=f"{stage_name} — attempts")
+            sub.add_column("attempt", justify="right")
+            sub.add_column("outcome")
+            sub.add_column("reason")
+            sub.add_column("cost", justify="right")
+            for a in attempts:
+                sub.add_row(
+                    str(a.get("attempt_n", "")),
+                    str(a.get("outcome", "")),
+                    (a.get("reason") or "")[:60],
+                    f"${a.get('cost_usd', 0):.4f}",
+                )
+            console.print(sub)
+
+        # Implementation subtasks breakdown
+        subtasks = st.get("subtasks") or {}
+        if subtasks:
+            sub = Table(show_header=True, header_style="bold", title="implementation — subtasks")
+            sub.add_column("sid")
+            sub.add_column("attempts", justify="right")
+            sub.add_column("outcome")
+            for sid, info in subtasks.items():
+                sub.add_row(
+                    sid,
+                    str(info.get("attempts_count", "")),
+                    str(info.get("outcome", "")),
+                )
+            console.print(sub)
+
+
+def _render_status_legacy(d: dict) -> None:
+    """Fall back to meta.yaml-only view when manifest.json doesn't exist (old tasks)."""
+    console.print(
+        f"[bold cyan]{d.get('task_id')}[/bold cyan]  "
+        f"status={d.get('status')}  cost=${d.get('cost_usd', 0):.4f}"
+    )
+    console.print(f"  mode: {d.get('mode')}")
+    console.print(f"  current_stage: {d.get('current_stage')}")
+    console.print(
+        "  [dim](legacy task — no manifest.json; for rich breakdown create new tasks)[/dim]"
+    )
     table = Table(show_header=True, header_style="bold")
     table.add_column("stage")
     table.add_column("status")

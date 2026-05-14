@@ -45,31 +45,6 @@ def _stage_names(pipeline: dict) -> list[str]:
     return [s["name"] for s in pipeline.get("stages", [])]
 
 
-def _archive_design_artifacts(task_dir: Path, prev_pass: int) -> None:
-    """Move just-completed design + design_review artifacts into pass_<N>/ subdirs.
-
-    Called before engine re-enters the design stage on a redesign loop.
-    Preserves forensic trail of every pass instead of overwriting drafts /
-    debate / verdict files when the next pass writes to the same paths.
-
-    Files NOT archived (intentionally — they're inputs for the next pass):
-      - design/redesign_signal.md (new pass's writer reads this)
-      - design/previous_rfc.md    (new pass's writer reads this)
-    """
-    for stage_dirname in ("design", "design_review"):
-        stage_dir = task_dir / stage_dirname
-        if not stage_dir.is_dir():
-            continue
-        archive = stage_dir / f"pass_{prev_pass}"
-        archive.mkdir(parents=True, exist_ok=True)
-        for entry in list(stage_dir.iterdir()):
-            if entry.is_dir():
-                continue  # skip nested pass_N/ dirs
-            if entry.name in {"redesign_signal.md", "previous_rfc.md"}:
-                continue  # inputs for next pass — keep at top level
-            entry.rename(archive / entry.name)
-
-
 class EngineError(RuntimeError):
     pass
 
@@ -278,10 +253,9 @@ class Engine:
                     f"theme=`{result.get('recurring_theme', 'unknown')}` — "
                     "rewinding to design stage with redesign_signal.md[/bold yellow]"
                 )
-                # Archive artifacts of just-completed pass before re-running.
-                # Pass numbering: loop_n=1 means we've just finished pass 1 and
-                # are about to start pass 2 → archive into design/pass_1/.
-                _archive_design_artifacts(self.task_dir, prev_pass=loop_n)
+                # Pass scoping is now handled by debate_writer + debate_critique
+                # writing directly under design/pass_<N>/ (Step 9.40 Phase 2c) —
+                # no archive step needed. Just reset stage state for re-run.
                 self._reset_stage("design")
                 self._reset_stage(name)  # also reset design_review itself
                 i = rfc_idx
