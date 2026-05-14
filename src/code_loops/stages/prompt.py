@@ -25,6 +25,11 @@ class StageContext:
     # stages will then fall back to legacy stage_def values; subtask_iterator
     # raises if base_repo is unresolvable).
     project_config: dict | None = None
+    # ArtifactWriter for scoped artifact writes + manifest sync. Stage
+    # handlers refactored in Step 9.40 use this instead of raw path.write_text
+    # for outputs that benefit from per-pass / per-attempt / per-round scoping.
+    # None for legacy callers / tests; new code paths should set it.
+    artifact_writer: object | None = None
 
 
 def load_agent_prompt(path: Path, ctx: StageContext) -> str:

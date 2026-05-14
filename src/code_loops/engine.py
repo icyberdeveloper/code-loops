@@ -10,7 +10,9 @@ from pathlib import Path
 import yaml
 from rich.console import Console
 
+from .artifact_writer import ArtifactWriter
 from .human_review import ReviewResult, review
+from .manifest import Manifest
 from .meta import MetaStore
 from .project_loader import load_project_config
 from .runner import RunnerFactory
@@ -82,6 +84,8 @@ class Engine:
     ):
         self.task_dir = task_dir
         self.meta = MetaStore(task_dir / "meta.yaml")
+        self.manifest = Manifest(task_dir / "manifest.json")
+        self.artifact_writer = ArtifactWriter(task_dir, self.manifest)
         self.pipeline = yaml.safe_load((PACKAGE_DIR / "pipeline.yaml").read_text())
         self._apply_defaults()
         if from_stage:
@@ -283,6 +287,7 @@ class Engine:
             repo_root=PACKAGE_DIR,
             revision_inputs=revision_inputs,
             project_config=self.project_config,
+            artifact_writer=self.artifact_writer,
         )
         try:
             result = handler.run(stage_def, ctx)

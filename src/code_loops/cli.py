@@ -23,6 +23,7 @@ from .eval_aggregator import (
     build_eval_message,
     get_recent_agent_changes,
 )
+from .manifest import Manifest
 from .meta import MetaStore
 from .project_loader import PROJECTS_DIR, list_projects, load_project_config
 from .runner import RunnerFactory
@@ -125,6 +126,7 @@ def new(
     task_dir.mkdir(parents=True)
     (task_dir / "task.md").write_text(task_text)
     MetaStore(task_dir / "meta.yaml").init_task(task_id, mode)
+    Manifest(task_dir / "manifest.json").init_task(task_id, mode)
 
     console.print(f"Created task: [bold cyan]{task_id}[/bold cyan]")
     console.print(f"  Source: {source_label}")
