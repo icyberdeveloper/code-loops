@@ -42,6 +42,16 @@ class FinalReviewStage:
         out_dir = ctx.task_dir / "release_review"
         out_dir.mkdir(parents=True, exist_ok=True)
 
+        # Determine attempt number from manifest (engine bumps stage on retry).
+        # On first run = 1; on needs_more_work re-run after corrective_subtasks
+        # land = 2, 3, ...
+        attempt_n = 1
+        if ctx.artifact_writer is not None:
+            existing = ctx.artifact_writer.manifest.stage_entry("release_review").get(
+                "attempts", []
+            )
+            attempt_n = len(existing) + 1
+
         # Assemble inputs
         rfc = _read_optional(ctx.task_dir / "design" / "final.md")
         prd = _read_optional(ctx.task_dir / "prd" / "prd.md")
@@ -61,20 +71,7 @@ class FinalReviewStage:
         runner = self.factory.make(stage_def)
         result = runner.run(sys_prompt, user_msg)
 
-        (out_dir / "review.md").write_text(result.text)
         verdict_data = _parse_verdict(result.text)
-
-        # If needs_more_work, persist proposed corrective subtasks for visibility
-        if verdict_data["verdict"] == "needs_more_work":
-            (out_dir / "corrective_subtasks.yaml").write_text(
-                yaml.safe_dump(
-                    {"corrective_subtasks": verdict_data.get("corrective_subtasks", [])},
-                    sort_keys=False,
-                    allow_unicode=True,
-                )
-            )
-
-        # Write a short verdict.md for human readers
         verdict_lines = [
             f"# Final review verdict: {verdict_data['verdict']}",
             "",
@@ -82,13 +79,45 @@ class FinalReviewStage:
         ]
         if verdict_data["verdict"] == "needs_more_work":
             cs = verdict_data.get("corrective_subtasks", [])
-            verdict_lines += [
-                "",
-                f"**Corrective subtasks proposed:** {len(cs)}",
-            ]
+            verdict_lines += ["", f"**Corrective subtasks proposed:** {len(cs)}"]
             for st in cs:
                 verdict_lines.append(f"- `{st.get('id', '?')}`: {st.get('title', '')}")
-        (out_dir / "verdict.md").write_text("\n".join(verdict_lines) + "\n")
+        verdict_md = "\n".join(verdict_lines) + "\n"
+        corrective_yaml = (
+            yaml.safe_dump(
+                {"corrective_subtasks": verdict_data.get("corrective_subtasks", [])},
+                sort_keys=False,
+                allow_unicode=True,
+            )
+            if verdict_data["verdict"] == "needs_more_work"
+            else None
+        )
+
+        # Write per-attempt artifacts (preserves needs_more_work iteration
+        # history) + flat copies for downstream/human readers.
+        if ctx.artifact_writer is not None:
+            ctx.artifact_writer.write_attempt("release_review", attempt_n, "review.md", result.text)
+            ctx.artifact_writer.write_attempt("release_review", attempt_n, "verdict.md", verdict_md)
+            if corrective_yaml is not None:
+                ctx.artifact_writer.write_attempt(
+                    "release_review", attempt_n, "corrective_subtasks.yaml", corrective_yaml
+                )
+            ctx.artifact_writer.manifest.record_attempt(
+                "release_review",
+                attempt_n,
+                outcome=verdict_data["verdict"],
+                cost_usd=result.cost_usd or 0,
+                duration_s=result.duration_s or 0,
+                reason=verdict_data.get("reason", ""),
+                extra={
+                    "corrective_subtasks_count": len(verdict_data.get("corrective_subtasks", []))
+                },
+            )
+        else:
+            (out_dir / "review.md").write_text(result.text)
+            (out_dir / "verdict.md").write_text(verdict_md)
+            if corrective_yaml is not None:
+                (out_dir / "corrective_subtasks.yaml").write_text(corrective_yaml)
 
         wall_duration = time.monotonic() - wall_start
         console.print(

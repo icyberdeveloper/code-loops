@@ -349,3 +349,47 @@ def test_impl_planner_raises_after_exhausting_retries(tmp_path):
     with pytest.raises(ImplPlannerError, match="failed validation after"):
         stage.run(_stage_def(), ctx)
     assert len(runner.calls) == 2
+
+
+def test_impl_planner_records_failed_attempts_in_manifest(tmp_path):
+    """Failed validation attempts must persist with their raw response + error
+    under attempts/attempt_N/, AND be recorded in manifest as schema_failed."""
+    from code_loops.artifact_writer import ArtifactWriter
+    from code_loops.manifest import Manifest
+
+    repo, task_dir = _make_repo_and_task(tmp_path)
+    bad_output = "# Plan\n\n```yaml\nsubtasks:\n  - id: BadId\n    title: x\n    files:\n      create: [a.py]\n    spec_md: y\n```\n"
+    runner = ScriptedRunner(
+        [
+            RunnerResult(text=bad_output, cost_usd=0.30, duration_s=5.0),
+            RunnerResult(text=VALID_OUTPUT, cost_usd=0.40, duration_s=8.0),
+        ]
+    )
+    stage = ImplPlannerStage(FakeFactory(runner))
+    manifest = Manifest(task_dir / "manifest.json")
+    manifest.init_task("0001_t", mode="feature")
+    aw = ArtifactWriter(task_dir, manifest)
+    ctx = StageContext(
+        task_dir=task_dir, prompts_dir=repo / "agents", repo_root=repo, artifact_writer=aw
+    )
+
+    stage.run(_stage_def(), ctx)
+
+    # Failed attempt 1 saved
+    a1_dir = task_dir / "impl_plan" / "attempts" / "attempt_1"
+    assert (a1_dir / "raw_response.md").read_text() == bad_output
+    assert "snake_case" in (a1_dir / "validation_error.txt").read_text()
+    # Successful attempt 2 saved
+    a2_dir = task_dir / "impl_plan" / "attempts" / "attempt_2"
+    assert (a2_dir / "subtasks.yaml").exists()
+    assert (a2_dir / "plan.md").exists()
+    # Flat copy at impl_plan/{plan,subtasks}.yaml = the latest attempt's content
+    assert (task_dir / "impl_plan" / "subtasks.yaml").read_text() == (
+        a2_dir / "subtasks.yaml"
+    ).read_text()
+    # Manifest records both attempts
+    attempts = manifest.data["stages"]["impl_plan"]["attempts"]
+    assert len(attempts) == 2
+    assert attempts[0]["outcome"] == "schema_failed"
+    assert "snake_case" in attempts[0]["reason"]
+    assert attempts[1]["outcome"] == "ok"

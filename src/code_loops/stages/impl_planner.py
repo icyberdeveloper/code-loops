@@ -77,18 +77,48 @@ class ImplPlannerStage:
                 break  # success
             except ImplPlannerError as e:
                 last_error = str(e)
+                # Persist failed attempt for forensics — both the raw response
+                # AND the validation error that rejected it.
+                if ctx.artifact_writer is not None:
+                    ctx.artifact_writer.write_attempt(
+                        "impl_plan", attempt, "raw_response.md", result.text
+                    )
+                    ctx.artifact_writer.write_attempt(
+                        "impl_plan", attempt, "validation_error.txt", last_error
+                    )
+                    ctx.artifact_writer.manifest.record_attempt(
+                        "impl_plan",
+                        attempt,
+                        outcome="schema_failed",
+                        cost_usd=result.cost_usd or 0,
+                        duration_s=result.duration_s or 0,
+                        reason=last_error,
+                    )
                 if attempt > MAX_VALIDATION_RETRIES:
                     raise ImplPlannerError(
                         f"impl_plan failed validation after {attempt} attempts: {e}"
                     ) from e
 
         assert plan_md is not None and subtasks_data is not None
-
-        out_dir = ctx.task_dir / "impl_plan"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "plan.md").write_text(plan_md)
         subtasks_yaml = yaml.safe_dump(subtasks_data, sort_keys=False, allow_unicode=True)
-        (out_dir / "subtasks.yaml").write_text(subtasks_yaml)
+
+        # Successful attempt: write to attempts/attempt_<N>/ AND copy to flat
+        # impl_plan/{plan.md, subtasks.yaml} for downstream stages.
+        if ctx.artifact_writer is not None:
+            ctx.artifact_writer.write_attempt("impl_plan", attempt, "plan.md", plan_md)
+            ctx.artifact_writer.write_attempt("impl_plan", attempt, "subtasks.yaml", subtasks_yaml)
+            ctx.artifact_writer.manifest.record_attempt(
+                "impl_plan",
+                attempt,
+                outcome="ok",
+                cost_usd=result.cost_usd or 0,
+                duration_s=result.duration_s or 0,
+            )
+        else:
+            out_dir = ctx.task_dir / "impl_plan"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "plan.md").write_text(plan_md)
+            (out_dir / "subtasks.yaml").write_text(subtasks_yaml)
 
         wall_duration = time.monotonic() - wall_start
         subtasks_count = len(subtasks_data["subtasks"])
