@@ -213,17 +213,24 @@ class Engine:
                 i = iter_idx
                 continue
 
-            # Detect redesign_needed verdict from debate_critique → bubble back to rfc.
+            # Detect redesign_needed OR needs_revision_max_rounds verdict from
+            # debate_critique → bubble back to rfc. Both signal "the current
+            # design didn't get critic approval" and should be treated as a
+            # redesign trigger, not a silent pass-through. debate_critique
+            # synthesizes recurring_theme + design_guidance for both cases so
+            # the downstream redesign_signal.md is well-formed.
             if (
                 stage_def["type"] == "debate_critique"
                 and result is not None
-                and result.get("verdict") == "redesign_needed"
+                and result.get("verdict") in ("redesign_needed", "needs_revision_max_rounds")
             ):
+                verdict_kind = result["verdict"]
                 loop_n = self.meta.increment_redesign_loop()
                 self.manifest.increment_redesign_loop()
                 if loop_n > MAX_REDESIGN_LOOPS:
                     console.print(
-                        f"[bold red]↯ redesign loops exhausted ({loop_n}/{MAX_REDESIGN_LOOPS})[/bold red]\n"
+                        f"[bold red]↯ redesign loops exhausted ({loop_n}/{MAX_REDESIGN_LOOPS}) "
+                        f"(last verdict: {verdict_kind})[/bold red]\n"
                         f"[red]Aborting before downstream stages corrupt with bad design.[/red]\n"
                         f"[yellow]Options to resume:[/yellow]\n"
                         f"  1. Manually edit `{self.task_dir}/design/final.md` to fix the design,\n"
@@ -244,13 +251,13 @@ class Engine:
                 )
                 if rfc_idx is None:
                     console.print(
-                        "[red]redesign_needed but no design stage in pipeline — falling through[/red]"
+                        f"[red]{verdict_kind} but no design stage in pipeline — falling through[/red]"
                     )
                     i += 1
                     continue
                 console.print(
-                    f"[bold yellow]↯ redesign loop {loop_n}/{MAX_REDESIGN_LOOPS} — "
-                    f"theme=`{result.get('recurring_theme', 'unknown')}` — "
+                    f"[bold yellow]↯ redesign loop {loop_n}/{MAX_REDESIGN_LOOPS} "
+                    f"({verdict_kind}) — theme=`{result.get('recurring_theme', 'unknown')}` — "
                     "rewinding to design stage with redesign_signal.md[/bold yellow]"
                 )
                 # Pass scoping is now handled by debate_writer + debate_critique

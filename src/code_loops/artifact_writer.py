@@ -43,15 +43,23 @@ class ArtifactWriter:
 
     # ---- Public API ----
 
-    def write_simple(self, stage: str, name: str, content: str) -> Path:
+    def write_simple(
+        self, stage: str, name: str, content: str, *, with_latest: bool = True
+    ) -> Path:
         """Single-attempt output (e.g. PRD, research branch result).
 
         Writes to `<task>/<stage>/<name>`. No history scoping. Updates
-        manifest.latest pointer.
+        manifest.latest pointer when `with_latest=True` (default).
+
+        Set `with_latest=False` for multi-output stages (parallel research
+        branches) where N artifacts are produced and no single one is the
+        canonical "latest" — otherwise each branch's call overwrites the
+        previous, leaving an arbitrary iteration-order winner.
         """
         path = self.task_dir / stage / name
         self._write(path, content)
-        self.manifest.set_latest(stage, f"{stage}/{name}")
+        if with_latest:
+            self.manifest.set_latest(stage, f"{stage}/{name}")
         return path
 
     def write_attempt(self, stage: str, attempt_n: int, name: str, content: str) -> Path:

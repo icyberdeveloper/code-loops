@@ -148,9 +148,10 @@ def test_critique_approves_first_round_keeps_rfc(tmp_path):
     result = stage.run(_stage_def(), ctx)
 
     assert (task_dir / "design_review" / "verdict.md").read_text().startswith("# Verdict: approved")
-    assert (task_dir / "design_review" / "safety.md").exists()
     assert (task_dir / "design_review" / "safety_v1.md").exists()
-    assert (task_dir / "design_review" / "elegance.md").exists()
+    assert (task_dir / "design_review" / "elegance_v1.md").exists()
+    # No `{name}.md` mirror is written — versioned snapshots are the source of truth.
+    assert not (task_dir / "design_review" / "safety.md").exists()
     assert "## Round 1 — critic: safety" in (task_dir / "design_review" / "debate.md").read_text()
     # RFC unchanged
     assert (task_dir / "design" / "final.md").read_text() == "# RFC v1\n\n## Context\noriginal RFC"
@@ -231,6 +232,15 @@ def test_critique_max_rounds_emits_needs_revision_max(tmp_path):
     assert result["rfc_revisions"] == 1
     # Max rounds reached without approval — no second revision attempt
     assert len(runner.calls) == 9
+    # Bug G fix: max_rounds-no-approval now synthesizes a redesign signal so
+    # engine bubbles back to design (instead of silently auto-approving).
+    assert result["recurring_theme"] == "no_approval_after_max_rounds"
+    assert "did not converge on approval after 2 rounds" in result["design_guidance"]
+    signal = (task_dir / "design" / "redesign_signal.md").read_text()
+    assert "no_approval_after_max_rounds" in signal
+    assert "iterative-revision path was exhausted" in signal
+    # Previous RFC snapshot for the next architect pass to reference
+    assert (task_dir / "design" / "previous_rfc.md").exists()
 
 
 def test_redesign_needed_short_circuits_and_writes_signal(tmp_path):

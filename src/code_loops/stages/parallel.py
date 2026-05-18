@@ -40,7 +40,13 @@ class ParallelStage:
                 parts = rel.split("/", 1)
                 if len(parts) == 2 and ctx.artifact_writer is not None:
                     stage_dir, name = parts
-                    ctx.artifact_writer.write_simple(stage_dir, name, result.text)
+                    # Parallel branches each produce a distinct artifact —
+                    # no single one is the canonical "latest". Skip the
+                    # manifest.latest update to avoid arbitrary
+                    # iteration-order-winner semantics.
+                    ctx.artifact_writer.write_simple(
+                        stage_dir, name, result.text, with_latest=False
+                    )
                 else:
                     target = ctx.task_dir / rel
                     target.parent.mkdir(parents=True, exist_ok=True)

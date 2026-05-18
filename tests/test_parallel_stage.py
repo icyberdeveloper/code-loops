@@ -152,3 +152,66 @@ def test_parallel_isolates_inputs_per_branch(tmp_path):
     # Problems & lessons sees its own only
     assert "Any prior incidents?" in by_spec["problems_lessons"]
     assert "Where is X?" not in by_spec["problems_lessons"]
+
+
+def test_parallel_does_not_set_manifest_latest(tmp_path):
+    """Bug A fix: parallel branches don't update manifest.latest.
+
+    Each branch produces a distinct artifact; treating any one as "the
+    latest" is arbitrary iteration-order semantics. The manifest's
+    `latest` pointer for the parallel stage should remain unset.
+    """
+    from code_loops.artifact_writer import ArtifactWriter
+    from code_loops.manifest import Manifest
+
+    repo, task_dir = _make_repo_and_task(tmp_path)
+    runner = CountingRunner(
+        {
+            "codebase": "# Codebase research",
+            "prompts": "# Prompts research",
+            "problems_lessons": "# Problems research",
+        }
+    )
+    stage = ParallelStage(FakeFactory(runner))
+    manifest = Manifest(task_dir / "manifest.json")
+    manifest.init_task("0001_x", mode="feature")
+    aw = ArtifactWriter(task_dir, manifest)
+    ctx = StageContext(
+        task_dir=task_dir,
+        prompts_dir=repo / "agents",
+        repo_root=repo,
+        artifact_writer=aw,
+    )
+    stage_def = {
+        "name": "research",
+        "type": "parallel",
+        "inputs": ["task.md", "research_plan/plan.md"],
+        "branches": [
+            {
+                "name": "codebase",
+                "prompt": "agents/research/researcher-codebase.md",
+                "outputs": ["research/codebase.md"],
+            },
+            {
+                "name": "prompts",
+                "prompt": "agents/research/researcher-prompts.md",
+                "outputs": ["research/prompts.md"],
+            },
+            {
+                "name": "problems_lessons",
+                "prompt": "agents/research/researcher-incidents.md",
+                "outputs": ["research/problems_lessons.md"],
+            },
+        ],
+    }
+    stage.run(stage_def, ctx)
+
+    # All 3 artifacts written
+    assert (task_dir / "research" / "codebase.md").exists()
+    assert (task_dir / "research" / "prompts.md").exists()
+    assert (task_dir / "research" / "problems_lessons.md").exists()
+    # But manifest.latest is NOT set (parallel stages don't have a single canonical "latest")
+    research_entry = manifest.data["stages"].get("research", {})
+    assert "latest" not in research_entry, (
+        f"Parallel stage should not set manifest.latest; got: {research_entry.get('latest')!r}"
+    )

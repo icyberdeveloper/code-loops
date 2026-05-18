@@ -190,6 +190,9 @@ def test_debate_converges_first_round(tmp_path):
         "Round 1"
     ) >= 2  # perspectives + facilitator
     assert result["converged"] is True
+    # Bug E fix: converge at round N → rounds == N (not N-1). One round of
+    # critique happened, even though only draft_v1 exists (no revision needed).
+    assert result["rounds"] == 1
     assert result["cost_usd"] == pytest.approx(0.23)
     assert len(runner.calls) == 4
 
@@ -225,6 +228,8 @@ def test_debate_two_rounds_then_converges(tmp_path):
     assert (task_dir / "design" / "draft_v2.md").read_text() == "DRAFT V2"
     assert (task_dir / "design" / "final.md").read_text() == "DRAFT V2"
     assert result["converged"] is True
+    # Bug E fix: 2 rounds executed, converge at R2 → rounds == 2 (not 1).
+    assert result["rounds"] == 2
     assert len(runner.calls) == 8
 
 

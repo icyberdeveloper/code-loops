@@ -117,11 +117,10 @@ class DebateCritiqueStage:
             )
             for name, cr in zip(critic_names, critic_results, strict=True):
                 cost_total += cr.cost_usd or 0
-                # Per-round critic snapshot inside this pass
+                # Per-round critic snapshot inside this pass. Latest critic
+                # output for a pass is just the highest-numbered _v<N>.md
+                # (or read from manifest); no separate `{name}.md` mirror.
                 (work_dir / f"{name}_v{round_n}.md").write_text(cr.text)
-                # Stable "latest" pointer at pass-level (overwrites each round
-                # within pass, NOT across passes since work_dir is pass-scoped)
-                (work_dir / f"{name}.md").write_text(cr.text)
                 _append_debate(debate_path, f"Round {round_n} — critic: {name}", cr.text)
             crit_cost = sum((cr.cost_usd or 0) for cr in critic_results)
             crit_max_dur = max((cr.duration_s for cr in critic_results), default=0)
@@ -167,6 +166,28 @@ class DebateCritiqueStage:
 
             if round_n == max_rounds:
                 verdict_status = "needs_revision_max_rounds"
+                # Synthesize theme + guidance so the engine can treat this
+                # as a redesign signal (same downstream handling as
+                # `redesign_needed`). Without this, the unresolved concerns
+                # would be lost on the floor and downstream stages would
+                # run against an unapproved RFC.
+                recurring_theme = "no_approval_after_max_rounds"
+                unresolved = [
+                    f"### {name}\n\n{cr.text}"
+                    for name, cr in zip(critic_names, critic_results, strict=True)
+                    if "NEEDS_REVISION" in cr.text.upper()
+                ]
+                design_guidance = (
+                    f"Critics did not converge on approval after {max_rounds} "
+                    f"rounds of critique + revision. The unresolved concerns "
+                    f"from the final round are below — treat them as the "
+                    f"binding signal for the next design pass.\n\n" + "\n\n".join(unresolved)
+                    if unresolved
+                    else f"Critics did not converge on approval after {max_rounds} "
+                    f"rounds. No critic ended with explicit NEEDS_REVISION — "
+                    f"facilitator declined approval based on aggregate concerns "
+                    f"in the debate; consult `design_review/pass_*/debate.md`."
+                )
                 _append_debate(
                     debate_path,
                     "STOPPED",
@@ -251,26 +272,45 @@ class DebateCritiqueStage:
             )
             ctx.artifact_writer.manifest.set_latest("design_review", "design_review/verdict.md")
 
-        # Write redesign_signal.md if redesign_needed — picked up by next rfc run
-        if verdict_status == "redesign_needed":
+        # Write redesign_signal.md if redesign_needed OR max_rounds-without-approval
+        # — both are bubbled back to the design stage by engine.py.
+        if verdict_status in ("redesign_needed", "needs_revision_max_rounds"):
             signal_path = ctx.task_dir / "design" / "redesign_signal.md"
-            signal_path.write_text(
-                "# Redesign signal\n\n"
-                f"The previous RFC was rejected after critique because the same "
-                f"underlying issue (theme: `{recurring_theme}`) kept producing new "
-                f"variants of concerns across multiple rounds, indicating the "
-                f"approach itself is wrong rather than the implementation.\n\n"
-                f"## Recurring theme\n\n`{recurring_theme}`\n\n"
-                f"## What was tried (and rejected)\n\n"
-                f"See `design/previous_rfc.md` for the full prior attempt. "
-                f"Critique reasoning:\n\n> {verdict_reason}\n\n"
-                f"## Design guidance\n\n{design_guidance}\n\n"
-                f"## Your task\n\n"
-                f"Produce a fundamentally different shape of solution — do NOT "
-                f"patch the variants of `{recurring_theme}` that the previous "
-                f"approach exhibited. The new approach should make those "
-                f"failure modes structurally impossible, not handled.\n"
-            )
+            if verdict_status == "redesign_needed":
+                signal_body = (
+                    f"The previous RFC was rejected after critique because the same "
+                    f"underlying issue (theme: `{recurring_theme}`) kept producing new "
+                    f"variants of concerns across multiple rounds, indicating the "
+                    f"approach itself is wrong rather than the implementation.\n\n"
+                    f"## Recurring theme\n\n`{recurring_theme}`\n\n"
+                    f"## What was tried (and rejected)\n\n"
+                    f"See `design/previous_rfc.md` for the full prior attempt. "
+                    f"Critique reasoning:\n\n> {verdict_reason}\n\n"
+                    f"## Design guidance\n\n{design_guidance}\n\n"
+                    f"## Your task\n\n"
+                    f"Produce a fundamentally different shape of solution — do NOT "
+                    f"patch the variants of `{recurring_theme}` that the previous "
+                    f"approach exhibited. The new approach should make those "
+                    f"failure modes structurally impossible, not handled.\n"
+                )
+            else:  # needs_revision_max_rounds
+                signal_body = (
+                    f"Critics did not converge on approval after {max_rounds} rounds "
+                    f"of critique + revision. The RFC was iterated through "
+                    f"{rfc_version - 1} responder revisions but still attracted "
+                    f"unresolved BLOCKER / NEEDS_REVISION verdicts in the final round.\n\n"
+                    f"## Signal\n\n`{recurring_theme}`\n\n"
+                    f"## What was tried (and capped)\n\n"
+                    f"See `design/previous_rfc.md` for the final RFC state. "
+                    f"Facilitator reasoning (last round):\n\n> {verdict_reason}\n\n"
+                    f"## Unresolved concerns from the final round\n\n{design_guidance}\n\n"
+                    f"## Your task\n\n"
+                    f"The iterative-revision path was exhausted without convergence. "
+                    f"Step back and produce a fundamentally different shape — do NOT "
+                    f"keep tweaking the same RFC's edges. Pick a different approach "
+                    f"that closes the unresolved concerns structurally.\n"
+                )
+            signal_path.write_text("# Redesign signal\n\n" + signal_body)
             # Snapshot the rejected RFC for the writer to reference
             (ctx.task_dir / "design" / "previous_rfc.md").write_text(current_rfc)
 

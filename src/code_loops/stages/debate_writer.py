@@ -245,7 +245,11 @@ class DebateWriterStage:
         flat_final_path = out_dir / "final.md"
         flat_final_path.write_text(final_content)
         wall_duration = time.monotonic() - wall_start
-        rounds_done = draft_version - 1 if converged else max_rounds
+        # `round_n` is the loop variable at break — equals the round at which
+        # converge fired OR max_rounds. `draft_version - 1` undercounts by 1
+        # on converge (no revision happens that round, so draft_version is
+        # stuck while round_n already advanced).
+        rounds_done = round_n
 
         # Record pass in manifest (forensic per-pass detail).
         if ctx.artifact_writer is not None:
