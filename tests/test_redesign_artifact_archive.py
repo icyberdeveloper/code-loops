@@ -5,6 +5,9 @@ which moved per-pass design artifacts into pass_<N>/ subdirs. That helper
 is now redundant — debate_writer + debate_critique scope their writes
 under pass_<N>/ directly via ArtifactWriter (Phase 2c). Archive tests
 removed; reset_from_stage tests preserved.
+
+Phase 4 (kill meta.yaml): switched from MetaStore to Manifest as the
+single store. Tests updated to match.
 """
 
 from __future__ import annotations
@@ -23,21 +26,21 @@ def test_reset_from_stage_clears_target_and_downstream(tmp_path, monkeypatch):
     )
     task_dir = tmp_path / "task"
     task_dir.mkdir()
-    from code_loops.meta import MetaStore
+    from code_loops.manifest import Manifest
 
-    meta = MetaStore(task_dir / "meta.yaml")
-    meta.init_task("0001_t", "feature")
+    manifest = Manifest(task_dir / "manifest.json")
+    manifest.init_task("0001_t", "feature")
     for s in ["prd", "research", "design", "impl_plan"]:
-        meta.stage_started(s)
-        meta.stage_completed(s, cost_usd=0.1, duration_s=1.0)
+        manifest.stage_started(s)
+        manifest.stage_completed(s, cost_usd=0.1, duration_s=1.0)
 
     from code_loops.engine import Engine
 
     Engine(task_dir, from_stage="design")
-    after = MetaStore(task_dir / "meta.yaml").data["stages"]
+    after = Manifest(task_dir / "manifest.json").data["stages"]
     assert after["prd"]["status"] == "done"
     assert after["research"]["status"] == "done"
-    # reset_stage wipes status (only preserves attempts counter)
+    # reset_stage wipes status (only preserves attempts_count counter)
     assert "status" not in after["design"]
     assert "status" not in after["impl_plan"]
 
@@ -51,9 +54,9 @@ def test_reset_from_stage_unknown_raises(tmp_path, monkeypatch):
     task_dir = tmp_path / "task"
     task_dir.mkdir()
     from code_loops.engine import EngineError
-    from code_loops.meta import MetaStore
+    from code_loops.manifest import Manifest
 
-    MetaStore(task_dir / "meta.yaml").init_task("0001_t", "feature")
+    Manifest(task_dir / "manifest.json").init_task("0001_t", "feature")
 
     from code_loops.engine import Engine
 

@@ -98,7 +98,9 @@ def _make_repo_and_task(tmp_path: Path) -> tuple[Path, Path]:
     (task_dir / "implementation").mkdir()
     (task_dir / "implementation" / "_full_diff.patch").write_text("diff content")
     (task_dir / "implementation" / "_files_changed.txt").write_text("app/foo.py\n")
-    (task_dir / "meta.yaml").write_text("task_id: 0001_x\nmode: feature\n")
+    (task_dir / "manifest.json").write_text(
+        '{"task_id": "0001_x", "mode": "feature", "total_cost_usd": 0.0}'
+    )
     return tmp_path, task_dir
 
 

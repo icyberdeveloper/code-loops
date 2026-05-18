@@ -12,7 +12,7 @@ The user message contains:
 - `=== implementation/_full_diff.patch ===` — the full diff against the base
   branch.
 - `=== implementation/_files_changed.txt ===` — list of files changed.
-- `=== meta.yaml ===` — task metadata (id, mode, cost, loops).
+- `=== manifest.json ===` — task metadata (id, mode, total_cost_usd, redesign/final loop counts, per-stage breakdown).
 
 You have read access to `<base_repo>` (where the change
 will eventually merge) via Read, Grep, Glob.

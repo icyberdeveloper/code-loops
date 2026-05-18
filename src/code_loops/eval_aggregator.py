@@ -1,6 +1,6 @@
 """Aggregate recent task runs into pipeline-evaluator input.
 
-Scans `tasks/<id>/meta.yaml` for the last N runs, computes per-stage
+Scans `tasks/<id>/manifest.json` for the last N runs, computes per-stage
 stats + cost/wall-clock trends, and builds the user message that
 triggers pipeline-evaluator's meta-evaluation report.
 """
@@ -12,14 +12,12 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 
 def aggregate_recent_runs(tasks_dir: Path, last_n: int = 20) -> dict[str, Any]:
-    """Read meta.yaml for the last N task runs (sorted by created_at desc).
+    """Read manifest.json for the last N task runs (sorted by created_at desc).
 
     Returns aggregation dict suitable for the user message of
-    pipeline-evaluator.md. Skips tasks without parseable meta.yaml.
+    pipeline-evaluator.md. Skips tasks without parseable manifest.json.
     """
     runs: list[dict] = []
     if not tasks_dir.exists():
@@ -28,12 +26,12 @@ def aggregate_recent_runs(tasks_dir: Path, last_n: int = 20) -> dict[str, Any]:
     for task_dir in tasks_dir.iterdir():
         if not task_dir.is_dir():
             continue
-        meta_path = task_dir / "meta.yaml"
-        if not meta_path.exists():
+        manifest_path = task_dir / "manifest.json"
+        if not manifest_path.exists():
             continue
         try:
-            data = yaml.safe_load(meta_path.read_text())
-        except yaml.YAMLError:
+            data = json.loads(manifest_path.read_text())
+        except json.JSONDecodeError:
             continue
         if not isinstance(data, dict) or "task_id" not in data:
             continue
@@ -49,7 +47,7 @@ def aggregate_recent_runs(tasks_dir: Path, last_n: int = 20) -> dict[str, Any]:
         "per_run_summary": [_run_row(r) for r in runs],
         "per_stage_aggregations": _aggregate_stages(runs),
         "cost_trend_oldest_to_newest": [
-            round(r.get("cost_usd", 0) or 0, 2) for r in reversed(runs)
+            round(r.get("total_cost_usd", 0) or 0, 2) for r in reversed(runs)
         ],
         "redesign_loops_total": sum((r.get("redesign_loop_count") or 0) for r in runs),
         "final_loops_total": sum((r.get("final_loop_count") or 0) for r in runs),
@@ -82,7 +80,7 @@ def _run_row(r: dict) -> dict[str, Any]:
         "task_id": r.get("task_id"),
         "mode": r.get("mode"),
         "status": r.get("status"),
-        "cost_usd": round(r.get("cost_usd", 0) or 0, 2),
+        "cost_usd": round(r.get("total_cost_usd", 0) or 0, 2),
         "stages_completed": sum(
             1 for st in (r.get("stages") or {}).values() if st.get("status") == "done"
         ),
@@ -106,7 +104,8 @@ def _aggregate_stages(runs: list[dict]) -> dict[str, dict[str, Any]]:
     for name, states in stage_data.items():
         durations = [s.get("duration_s", 0) or 0 for s in states]
         costs = [s.get("cost_usd", 0) or 0 for s in states]
-        attempts = [s.get("attempts", 1) or 1 for s in states]
+        # manifest.json names this attempts_count (Phase 1 schema change)
+        attempts = [s.get("attempts_count", 1) or 1 for s in states]
         n = len(states)
         result[name] = {
             "n_runs_with_stage": n,

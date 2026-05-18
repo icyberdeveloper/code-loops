@@ -24,7 +24,6 @@ from .eval_aggregator import (
     get_recent_agent_changes,
 )
 from .manifest import Manifest
-from .meta import MetaStore
 from .project_loader import PROJECTS_DIR, list_projects, load_project_config
 from .runner import RunnerFactory
 
@@ -79,7 +78,7 @@ _POSTMORTEM_MARKERS = (
 def _detect_mode(task_text: str, source_path: Path | None) -> str:
     """Decide between 'feature' and 'from_problem' from content + path heuristics.
 
-    Used by `new` to tag meta.yaml for downstream analytics
+    Used by `new` to tag manifest.json for downstream analytics
     (pipeline-evaluator groups runs by mode). Business-analyst still
     detects mode independently from task content — this is a hint.
     """
@@ -125,7 +124,6 @@ def new(
     task_dir = TASKS_DIR / task_id
     task_dir.mkdir(parents=True)
     (task_dir / "task.md").write_text(task_text)
-    MetaStore(task_dir / "meta.yaml").init_task(task_id, mode)
     Manifest(task_dir / "manifest.json").init_task(task_id, mode)
 
     console.print(f"Created task: [bold cyan]{task_id}[/bold cyan]")
@@ -362,7 +360,7 @@ def run(
         "--from-stage",
         help=(
             "Force-restart from this stage (clears its done-marker and all "
-            "downstream stages in meta.yaml). Use after a manual edit to a "
+            "downstream stages in manifest.json). Use after a manual edit to a "
             "stage's output, or to recover from `redesign_loops_exceeded` "
             "by running `--from-stage impl_plan`."
         ),
@@ -390,14 +388,11 @@ def status(task_id: str):
         console.print(f"[red]Task not found: {task_id}[/red]")
         raise typer.Exit(1)
 
-    # Prefer manifest.json (richer); fall back to meta.yaml for legacy tasks.
     manifest_path = task_dir / "manifest.json"
-    if manifest_path.exists():
-        d = Manifest(manifest_path).data
-        _render_status_from_manifest(d)
-    else:
-        d = MetaStore(task_dir / "meta.yaml").data
-        _render_status_legacy(d)
+    if not manifest_path.exists():
+        console.print(f"[red]Task {task_id} has no manifest.json (corrupted or pre-Phase-1)[/red]")
+        raise typer.Exit(1)
+    _render_status_from_manifest(Manifest(manifest_path).data)
 
 
 def _render_status_from_manifest(d: dict) -> None:
@@ -490,39 +485,11 @@ def _render_status_from_manifest(d: dict) -> None:
             console.print(sub)
 
 
-def _render_status_legacy(d: dict) -> None:
-    """Fall back to meta.yaml-only view when manifest.json doesn't exist (old tasks)."""
-    console.print(
-        f"[bold cyan]{d.get('task_id')}[/bold cyan]  "
-        f"status={d.get('status')}  cost=${d.get('cost_usd', 0):.4f}"
-    )
-    console.print(f"  mode: {d.get('mode')}")
-    console.print(f"  current_stage: {d.get('current_stage')}")
-    console.print(
-        "  [dim](legacy task — no manifest.json; for rich breakdown create new tasks)[/dim]"
-    )
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("stage")
-    table.add_column("status")
-    table.add_column("attempts")
-    table.add_column("duration_s")
-    table.add_column("cost_usd")
-    for name, st in (d.get("stages") or {}).items():
-        table.add_row(
-            name,
-            str(st.get("status")),
-            str(st.get("attempts", "")),
-            str(st.get("duration_s", "")),
-            f"${st.get('cost_usd', 0):.4f}" if st.get("cost_usd") else "",
-        )
-    console.print(table)
-
-
 @app.command()
 def cancel(task_id: str):
     """Mark task cancelled (artifacts preserved)."""
     task_dir = TASKS_DIR / task_id
-    MetaStore(task_dir / "meta.yaml").set_status("cancelled")
+    Manifest(task_dir / "manifest.json").set_status("cancelled")
     console.print(f"[yellow]Task {task_id} cancelled.[/yellow]")
 
 
@@ -548,7 +515,7 @@ def commit(
     if not task_dir.exists():
         console.print(f"[red]Task not found: {task_id}[/red]")
         raise typer.Exit(1)
-    meta = MetaStore(task_dir / "meta.yaml").data
+    meta = Manifest(task_dir / "manifest.json").data
     branch = f"code-loops/{task_id}"
     worktree = task_dir / "worktree" / "wt"
 
@@ -557,7 +524,8 @@ def commit(
     base_repo = Path(config["project"]["base_repo"])
 
     console.print(
-        f"[bold cyan]Task {task_id}[/bold cyan]  status={meta.get('status')}  cost=${meta.get('cost_usd', 0):.2f}"
+        f"[bold cyan]Task {task_id}[/bold cyan]  status={meta.get('status')}  "
+        f"cost=${meta.get('total_cost_usd', 0):.2f}"
     )
     console.print(f"  Branch (in {base_repo}): [yellow]{branch}[/yellow]")
     console.print(f"  Worktree: [yellow]{worktree}[/yellow]")
@@ -598,13 +566,15 @@ def list_tasks():
     for task_dir in sorted(TASKS_DIR.iterdir()):
         if not task_dir.is_dir():
             continue
-        meta = MetaStore(task_dir / "meta.yaml")
-        d = meta.data
+        # Skip the `archived/` sibling (and any non-task dirs).
+        if not re.match(r"^\d{4}_", task_dir.name):
+            continue
+        d = Manifest(task_dir / "manifest.json").data
         table.add_row(
             d.get("task_id", task_dir.name),
             str(d.get("status", "")),
             str(d.get("mode", "")),
-            f"${d.get('cost_usd', 0):.4f}",
+            f"${d.get('total_cost_usd', 0):.4f}",
         )
         rows += 1
     if rows == 0:
@@ -621,7 +591,7 @@ def evaluate(
     """Run pipeline-evaluator (meta-pipeline evaluation) over recent task runs.
 
     Aggregates per-stage stats / cost trends / convergence rates from
-    `tasks/*/meta.yaml`, includes recent `git log` of `agents/` for A/B
+    `tasks/*/manifest.json`, includes recent `git log` of `agents/` for A/B
     framing, and invokes pipeline-evaluator.md to produce a trend report at
     `_eval/report_<timestamp>.md`.
     """

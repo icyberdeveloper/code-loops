@@ -36,7 +36,7 @@ class TechWriterStage:
         rfc = _read_optional(ctx.task_dir / "design" / "final.md")
         diff = _read_optional(ctx.task_dir / "implementation" / "_full_diff.patch")
         files_changed = _read_optional(ctx.task_dir / "implementation" / "_files_changed.txt")
-        meta = _read_optional(ctx.task_dir / "meta.yaml")
+        manifest = _read_optional(ctx.task_dir / "manifest.json")
 
         sys_prompt = load_agent_prompt(ctx.repo_root / stage_def["prompt"], ctx)
         user_msg = (
@@ -44,7 +44,7 @@ class TechWriterStage:
             f"=== design/final.md ===\n{rfc}\n\n"
             f"=== implementation/_full_diff.patch ===\n{diff}\n\n"
             f"=== implementation/_files_changed.txt ===\n{files_changed}\n\n"
-            f"=== meta.yaml ===\n{meta}\n"
+            f"=== manifest.json ===\n{manifest}\n"
         )
 
         runner = self.factory.make(stage_def)

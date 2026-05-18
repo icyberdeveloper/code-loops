@@ -13,7 +13,6 @@ from rich.console import Console
 from .artifact_writer import ArtifactWriter
 from .human_review import ReviewResult, review
 from .manifest import Manifest
-from .meta import MetaStore
 from .project_loader import load_project_config
 from .runner import RunnerFactory
 from .stages.action import ActionStage
@@ -33,7 +32,7 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 console = Console()
 
 # After this many redesign loops we stop trying — fall through forward with a
-# marker rather than infinite-loop. Counter persists in meta.yaml.
+# marker rather than infinite-loop. Counter persists in manifest.json.
 MAX_REDESIGN_LOOPS = 3
 
 # After this many final-review correction loops we stop trying. Each loop appends
@@ -58,16 +57,12 @@ class Engine:
         from_stage: str | None = None,
     ):
         self.task_dir = task_dir
-        self.meta = MetaStore(task_dir / "meta.yaml")
         self.manifest = Manifest(task_dir / "manifest.json")
-        # Backward compat: legacy tasks (created before manifest landed) have
-        # no manifest.json — back-fill from meta so dual-write paths below
-        # don't crash on first stage start.
+        # Engine is the sole writer of manifest.json — `code-loops new` already
+        # called init_task. If we're here with an empty manifest, the task was
+        # created out-of-band; default to the dir name + feature mode.
         if not self.manifest.data:
-            self.manifest.init_task(
-                self.meta.data.get("task_id", task_dir.name),
-                self.meta.data.get("mode", "feature"),
-            )
+            self.manifest.init_task(task_dir.name, "feature")
         self.artifact_writer = ArtifactWriter(task_dir, self.manifest)
         self.pipeline = yaml.safe_load((PACKAGE_DIR / "pipeline.yaml").read_text())
         self._apply_defaults()
@@ -121,16 +116,6 @@ class Engine:
                                 for k, v in defaults.items():
                                     sub.setdefault(k, v)
 
-    def _reset_stage(self, name: str) -> None:
-        """Reset a stage in BOTH meta + manifest to keep them in sync."""
-        self.meta.reset_stage(name)
-        self.manifest.reset_stage(name)
-
-    def _set_status(self, status: str) -> None:
-        """Set status in BOTH meta + manifest to keep them in sync."""
-        self.meta.set_status(status)
-        self.manifest.set_status(status)
-
     def _reset_from_stage(self, from_stage: str) -> None:
         """Mark all stages from `from_stage` onwards as not-done.
 
@@ -143,11 +128,11 @@ class Engine:
             raise EngineError(f"--from-stage {from_stage!r} not in pipeline. Valid stages: {names}")
         idx = names.index(from_stage)
         for name in names[idx:]:
-            self._reset_stage(name)
-        self._set_status("in_progress")
+            self.manifest.reset_stage(name)
+        self.manifest.set_status("in_progress")
         console.print(
             f"[bold yellow]↻ resume from `{from_stage}` — "
-            f"reset {len(names) - idx} downstream stage(s) in meta[/bold yellow]"
+            f"reset {len(names) - idx} downstream stage(s)[/bold yellow]"
         )
 
     def run(self) -> None:
@@ -156,7 +141,7 @@ class Engine:
         while i < len(stages):
             stage_def = stages[i]
             name = stage_def["name"]
-            if self.meta.is_stage_done(name):
+            if self.manifest.is_stage_done(name):
                 console.print(f"[dim]skip {name} (already done)[/dim]")
                 i += 1
                 continue
@@ -170,15 +155,14 @@ class Engine:
                 and result is not None
                 and result.get("verdict") == "needs_more_work"
             ):
-                loop_n = self.meta.increment_final_loop()
-                self.manifest.increment_final_loop()
+                loop_n = self.manifest.increment_final_loop()
                 corrective = result.get("corrective_subtasks", []) or []
                 if loop_n > MAX_FINAL_LOOPS:
                     console.print(
                         f"[bold yellow]↯ final-review loops exhausted "
                         f"({loop_n}/{MAX_FINAL_LOOPS}); falling through with marker[/bold yellow]"
                     )
-                    self._set_status("final_loops_exceeded")
+                    self.manifest.set_status("final_loops_exceeded")
                     i += 1
                     continue
                 if not corrective:
@@ -186,7 +170,7 @@ class Engine:
                         "[bold yellow]↯ final_review needs_more_work but no corrective_subtasks "
                         "proposed — falling through with marker[/bold yellow]"
                     )
-                    self._set_status("final_review_blocked")
+                    self.manifest.set_status("final_review_blocked")
                     i += 1
                     continue
                 # Append corrective subtasks to subtasks.yaml + reset downstream stages
@@ -207,9 +191,9 @@ class Engine:
                     f"appended {len(corrective)} corrective subtasks; "
                     "rewinding to implementation[/bold yellow]"
                 )
-                self._reset_stage("implementation")
-                self._reset_stage("validation")
-                self._reset_stage(name)
+                self.manifest.reset_stage("implementation")
+                self.manifest.reset_stage("validation")
+                self.manifest.reset_stage(name)
                 i = iter_idx
                 continue
 
@@ -225,8 +209,7 @@ class Engine:
                 and result.get("verdict") in ("redesign_needed", "needs_revision_max_rounds")
             ):
                 verdict_kind = result["verdict"]
-                loop_n = self.meta.increment_redesign_loop()
-                self.manifest.increment_redesign_loop()
+                loop_n = self.manifest.increment_redesign_loop()
                 if loop_n > MAX_REDESIGN_LOOPS:
                     console.print(
                         f"[bold red]↯ redesign loops exhausted ({loop_n}/{MAX_REDESIGN_LOOPS}) "
@@ -238,7 +221,7 @@ class Engine:
                         f"  2. Bump MAX_REDESIGN_LOOPS in code_loops/engine.py and re-run\n"
                         f"  3. `code-loops cancel {self.task_dir.name}` to discard"
                     )
-                    self._set_status("redesign_loops_exceeded")
+                    self.manifest.set_status("redesign_loops_exceeded")
                     raise EngineError(
                         f"redesign_loops_exceeded ({loop_n}/{MAX_REDESIGN_LOOPS}). "
                         f"See log above for resume options."
@@ -263,14 +246,14 @@ class Engine:
                 # Pass scoping is now handled by debate_writer + debate_critique
                 # writing directly under design/pass_<N>/ (Step 9.40 Phase 2c) —
                 # no archive step needed. Just reset stage state for re-run.
-                self._reset_stage("design")
-                self._reset_stage(name)  # also reset design_review itself
+                self.manifest.reset_stage("design")
+                self.manifest.reset_stage(name)  # also reset design_review itself
                 i = rfc_idx
                 continue
 
             i += 1
 
-        self._set_status("completed")
+        self.manifest.set_status("completed")
         console.print("[green]Pipeline complete.[/green]")
 
     def _run_stage(self, stage_def: dict, revision_inputs: list[Path] | None = None) -> dict | None:
@@ -281,7 +264,6 @@ class Engine:
             raise EngineError(f"Unknown stage type: {stype} (stage {name})")
 
         console.print(f"[cyan]▶ {name}[/cyan]")
-        self.meta.stage_started(name)
         self.manifest.stage_started(name)
         self.manifest.set_current_stage(name)
         ctx = StageContext(
@@ -295,16 +277,10 @@ class Engine:
         try:
             result = handler.run(stage_def, ctx)
         except Exception as exc:
-            self.meta.stage_failed(name, str(exc))
             self.manifest.stage_failed(name, str(exc))
             console.print(f"[red]✗ {name} failed: {exc}[/red]")
             raise
 
-        self.meta.stage_completed(
-            name,
-            cost_usd=result.get("cost_usd"),
-            duration_s=result.get("duration_s", 0),
-        )
         self.manifest.stage_completed(
             name,
             cost_usd=result.get("cost_usd") or 0,
@@ -326,7 +302,7 @@ class Engine:
         if rr.action == "approve":
             return
         if rr.action == "abort":
-            self._set_status("cancelled")
+            self.manifest.set_status("cancelled")
             raise EngineError(f"User aborted at stage {name}")
         if rr.action == "revise":
             assert rr.comment is not None

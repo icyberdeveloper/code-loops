@@ -13,7 +13,7 @@ Trigger contract:
     as the trigger. Absence = no-op.
 
 Cost: ~$0.30-3.00 per surveyor invocation (Opus on max effort,
-scales with target project size). Charged to the task's meta.yaml
+scales with target project size). Charged to the task's manifest.json
 under stage `auto_resurvey`.
 """
 

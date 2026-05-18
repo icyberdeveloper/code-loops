@@ -54,9 +54,9 @@ def test_engine_runs_two_stages_in_order(tmp_path, monkeypatch):
     task_dir = _make_task(repo, "0001_test", "Add /export-data command")
 
     # Patch PACKAGE_DIR in engine + initialize task meta
-    from code_loops.meta import MetaStore
+    from code_loops.manifest import Manifest
 
-    MetaStore(task_dir / "meta.yaml").init_task("0001_test", "feature")
+    Manifest(task_dir / "manifest.json").init_task("0001_test", "feature")
 
     responses = iter(
         [
@@ -82,7 +82,7 @@ def test_engine_runs_two_stages_in_order(tmp_path, monkeypatch):
 
     assert (task_dir / "prd" / "prd.md").read_text().startswith("# PRD")
     assert (task_dir / "research_plan" / "plan.md").read_text().startswith("# Plan")
-    meta = MetaStore(task_dir / "meta.yaml").data
+    meta = Manifest(task_dir / "manifest.json").data
     assert meta["stages"]["prd"]["status"] == "done"
     assert meta["stages"]["plan"]["status"] == "done"
     assert meta["status"] == "completed"
@@ -110,9 +110,9 @@ def test_engine_skips_already_done_stage(tmp_path):
     )
     task_dir = _make_task(repo, "0001_test", "task")
 
-    from code_loops.meta import MetaStore
+    from code_loops.manifest import Manifest
 
-    meta = MetaStore(task_dir / "meta.yaml")
+    meta = Manifest(task_dir / "manifest.json")
     meta.init_task("0001_test", "feature")
     meta.stage_started("prd")
     meta.stage_completed("prd", cost_usd=0.05, duration_s=1.0)
@@ -140,5 +140,5 @@ def test_engine_skips_already_done_stage(tmp_path):
     # Runner should be called exactly once (only for plan, not prd)
     assert len(runner_calls) == 1
     # plan stage should now be done
-    meta_after = MetaStore(task_dir / "meta.yaml").data
+    meta_after = Manifest(task_dir / "manifest.json").data
     assert meta_after["stages"]["plan"]["status"] == "done"

@@ -1,10 +1,10 @@
-"""Task artifact manifest — single source of truth for per-iteration state.
+"""Task artifact manifest — single source of truth for pipeline state.
 
-The manifest.json file at the task root captures everything that meta.yaml
-doesn't: per-pass redesign-loop state, per-attempt retry state for
-impl_plan / final_review, per-round debate state, per-subtask fix-loop
-attempts. meta.yaml stays as a backward-compatible high-level summary;
-this file is the forensic-grade record.
+The manifest.json file at the task root captures everything: task
+metadata (id, mode, status, cost), per-stage status, per-pass
+redesign-loop state, per-attempt retry state for impl_plan /
+final_review, per-round debate state, per-subtask fix-loop attempts,
+and `latest` artifact pointers for downstream stage inputs.
 
 Schema versioning: incremented on any breaking shape change. Readers
 must check `schema_version` before assuming fields.
@@ -80,7 +80,7 @@ class Manifest:
         self._data["current_stage"] = stage
         self._save()
 
-    # ---- Stage-level (mirrors MetaStore but in manifest) ----
+    # ---- Stage-level ----
 
     def stage_entry(self, stage: str) -> dict:
         stages = self._data.setdefault("stages", {})
@@ -241,7 +241,7 @@ class Manifest:
             entry["files_changed"] = files_changed
         self._save()
 
-    # ---- Loop counters (mirror MetaStore for engine sync) ----
+    # ---- Loop counters ----
 
     def increment_redesign_loop(self) -> int:
         n = (self._data.get("redesign_loop_count") or 0) + 1

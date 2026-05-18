@@ -202,7 +202,7 @@ stages:
       - design/final.md
       - implementation/_full_diff.patch
       - implementation/_files_changed.txt
-      - meta.yaml
+      - manifest.json
     outputs:
       - docs/changelog_entry.md
       - docs/adr/

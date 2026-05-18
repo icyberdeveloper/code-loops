@@ -153,7 +153,8 @@ Mode (`feature` vs `from_problem`) is auto-detected from path keywords
 `## Incident`, `## Problem`, `## Symptoms`, etc — Russian equivalents
 also recognized for bilingual input).
 
-Output: `tasks/<NNNN>_<slug>/` with `task.md` and `meta.yaml`.
+Output: `tasks/<NNNN>_<slug>/` with `task.md` and `manifest.json` (the
+forensic-grade state file — see [Task layout](#task-layout--manifestjson)).
 
 ### Run the pipeline
 ```bash
@@ -171,6 +172,7 @@ uv run code-loops commit <task_id>      # print branch + push instructions for a
 uv run code-loops cancel <task_id>      # mark task cancelled (artifacts preserved)
 uv run code-loops resurvey <name>       # refresh brief.md after material project changes
 uv run code-loops eval                  # pipeline-evaluator: meta-analysis over recent runs
+uv run code-loops run <task_id> --from-stage impl_plan  # resume from a specific stage after manual edit
 ```
 
 ---
@@ -195,7 +197,8 @@ code-loops/
 │   │                       #   handles auto-loops (redesign_needed, needs_more_work)
 │   ├── runner.py           #   ClaudeRunner — claude --print subprocess wrapper
 │   ├── project_loader.py   #   project.yaml loader + brief injection
-│   ├── meta.py             #   per-task meta.yaml (status, cost, durations)
+│   ├── manifest.py         #   per-task manifest.json (forensic state — see Task layout)
+│   ├── artifact_writer.py  #   helper for scoped artifact writes (pass_N, attempts, rounds)
 │   ├── worktree.py         #   git worktree mgmt + configurable test-file protection
 │   ├── isolation.py        #   research-question slicing (one researcher = one tag)
 │   ├── human_review.py     #   checkpoint UI (approve/abort/revise)
@@ -209,7 +212,7 @@ code-loops/
 │       └── auto_resurvey.py  # Stage 12 — conditional brief.md refresh
 ├── examples/               # starter templates (project.yaml)
 ├── scripts/                # CI helpers (e.g. check_no_leakage.sh)
-└── tests/                  # 214 pytest tests (orchestrator only)
+└── tests/                  # 232 pytest tests (orchestrator only)
 
 # WORKSPACE (created in user's CWD when running code-loops):
 <workspace>/
@@ -217,12 +220,146 @@ code-loops/
 │   ├── project.yaml        #   name + base_repo + optional test_infrastructure
 │   └── brief.md            #   auto-generated project knowledge
 ├── tasks/<NNNN>_<slug>/    # per-task workspaces
-│   ├── task.md, meta.yaml
+│   ├── task.md, manifest.json
 │   ├── prd/, research_plan/, research/, design/, design_review/,
 │   │   impl_plan/, implementation/, validation/, release_review/, docs/
+│   │   (each with pass_<N>/ + attempts/attempt_<N>/ subdirs as needed —
+│   │    see Task layout section below)
 │   └── worktree/wt/        # git worktree off base_repo
+├── tasks/archived/         # past runs you've manually archived (CLI ignores)
 └── _eval/                  # pipeline-evaluator reports
 ```
+
+### Task layout & manifest.json
+
+Each `tasks/<id>/` directory captures **everything** from the pipeline run — not
+just the final outputs but every intermediate artifact, scoped so you can
+diff between iterations. The shape:
+
+```
+tasks/0042_my_task/
+├── task.md                      # original task description
+├── manifest.json                # ⭐ forensic-grade state (see schema below)
+├── prd/prd.md                   # single-artifact stages: just the output
+├── research_plan/plan.md
+├── research/
+│   ├── codebase.md              # 5 parallel branches; no flat "latest" pointer
+│   ├── prompts.md
+│   ├── incidents.md
+│   ├── data.md
+│   └── ai.md
+├── design/                      # debate_writer with redesign loops
+│   ├── final.md                 # latest accepted RFC (always = pass_<latest>/final.md)
+│   └── pass_1/                  # each redesign pass scopes its own subdir
+│       ├── draft_v1.md          #   round 0 — writer's initial draft
+│       ├── draft_v2.md          #   round 1 revision
+│       ├── ...
+│       ├── draft_v5.md          #   round 4 revision (if applicable)
+│       ├── debate.md            #   full transcript: perspectives + facilitator
+│       └── final.md             #   pass's accepted RFC
+│   └── pass_2/...               # if first pass got redesign_needed verdict
+├── design_review/
+│   ├── verdict.md               # latest verdict (approved | redesign_needed | needs_revision_max_rounds)
+│   └── pass_1/
+│       ├── safety_v1.md         # per-round critic snapshots
+│       ├── elegance_v1.md
+│       ├── hallucination_v1.md
+│       ├── ai_v1.md
+│       ├── debate.md            # facilitator log + revisions
+│       └── verdict.md           # this pass's verdict (copy of latest)
+├── impl_plan/                   # schema retries scope per attempt
+│   ├── plan.md                  # latest attempt's outputs (flat for downstream)
+│   ├── subtasks.yaml
+│   └── attempts/attempt_1/      # if first attempt failed schema validation:
+│       ├── raw_response.md      #   what the LLM produced
+│       └── validation_error.txt #   why it was rejected
+├── implementation/
+│   ├── subtasks/                # per-subtask per-attempt per-role artifacts
+│   │   └── 00_baseline/
+│   │       ├── test_writer.md   # final shipped role outputs
+│   │       ├── coder.md
+│   │       └── attempts/        # full fix-loop history
+│   │           ├── attempt_1/   #   first try
+│   │           │   ├── test_writer.md
+│   │           │   ├── coder.md
+│   │           │   └── reviewer.md
+│   │           └── attempt_2/   #   triage-routed retry
+│   │               └── coder.md
+│   ├── _full_diff.patch
+│   └── _files_changed.txt
+├── validation/result.yaml       # programmatic gate (pytest/ruff)
+├── regression_check/            # conditional eval-bench gate
+├── release_review/
+│   ├── verdict.md               # latest verdict
+│   └── attempts/attempt_1/      # if needs_more_work, each iteration scoped here
+│       └── verdict.md           #   with corrective_subtasks
+├── docs/                        # tech_writer outputs
+│   ├── changelog_entry.md
+│   ├── adr/<NNNN>_<slug>.md
+│   └── maintenance_notes.md     # conditional brief.md staleness flag
+└── worktree/wt/                 # the git worktree off base_repo where impl lands
+```
+
+**Why per-pass / per-attempt scoping?** Two reasons:
+1. **Forensics** — when a 2nd redesign pass produces a worse RFC than pass 1,
+   you can `diff pass_1/final.md pass_2/final.md` instead of grep-archeology.
+2. **No silent overwrites** — pass 2's `draft_v1.md` doesn't clobber pass 1's
+   `draft_v1.md`. Each iteration's artifacts are immutable once written.
+
+**The `manifest.json` schema** (key fields):
+
+```json
+{
+  "task_id": "0042_my_task",
+  "schema_version": "1.0",
+  "mode": "feature",                 // | "from_problem"
+  "created_at": "2026-05-18T10:00:00+00:00",
+  "status": "in_progress",           // | "completed" | "cancelled" | "redesign_loops_exceeded"
+  "current_stage": "design_review",
+  "total_cost_usd": 23.45,
+  "redesign_loop_count": 0,          // bumped each time design_review triggers a rewind
+  "final_loop_count": 0,             // bumped each time release_review issues corrective_subtasks
+  "stages": {
+    "design": {
+      "status": "done",
+      "cost_usd": 15.22, "duration_s": 2559.06,
+      "latest": "design/final.md",
+      "passes_count": 1,
+      "passes": [
+        {"pass_n": 1, "rounds": 5, "converged": true, "cost_usd": 15.22, ...}
+      ]
+    },
+    "impl_plan": {
+      "attempts_count": 2,
+      "attempts": [
+        {"attempt_n": 1, "outcome": "schema_failed", "reason": "..."},
+        {"attempt_n": 2, "outcome": "ok", "cost_usd": 0.50}
+      ]
+    },
+    "implementation": {
+      "subtasks": {
+        "00_baseline": {"attempts_count": 2, "outcome": "shipped", "files_changed": [...]}
+      }
+    }
+  }
+}
+```
+
+`code-loops status <task_id>` renders this as 4 nested tables (stages, passes,
+attempts, subtasks).
+
+### Resume from a specific stage
+
+If you manually edited an output (e.g. polished `design/final.md` by hand,
+or fixed a generated test), force the engine to resume from the next stage:
+
+```bash
+uv run code-loops run 0042_my_task --from-stage impl_plan
+```
+
+This resets `impl_plan` + all downstream stages in the manifest so they
+re-run; upstream stages (`prd`, `research`, `design`, `design_review`) are
+left intact. Use this also to bypass a stuck stage after a hand-edit.
 
 ### Pipeline definition (`pipeline.yaml`)
 
@@ -343,7 +480,7 @@ identify which stages tolerate downgrade.
 
 ## Observability & quality monitoring
 
-Every run writes `tasks/<id>/meta.yaml` with per-stage cost, duration,
+Every run writes `tasks/<id>/manifest.json` with per-stage cost, duration,
 attempts, and verdicts. Run:
 
 ```bash
@@ -377,7 +514,7 @@ Reports land at `_eval/report_<timestamp>.md`.
 - 27 agents in 6 families with `{PROJECT_BRIEF}` injection
 - Configurable test infrastructure (Python `tests/` default; pluggable)
 - `init` / `resurvey` / `projects` / `eval` CLI commands
-- 195 pytest tests covering orchestrator + worktree + agents
+- 232 pytest tests covering orchestrator + worktree + agents
 
 **Next**:
 - **Multi-language support** — today the validation stage and several
