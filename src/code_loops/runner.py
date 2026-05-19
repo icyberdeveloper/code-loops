@@ -2,6 +2,11 @@
 
 Synchronous: blocks until the subprocess returns a result. Cost and token usage
 are extracted from the stream-json `result` event.
+
+Retries: transient failures (most commonly OOM-SIGKILL when running N parallel
+agents on a small VM, signature = rc!=0 + empty stderr) are retried up to
+MAX_RETRIES times with exponential backoff. Auth/quota failures (non-empty
+stderr with recognized patterns) and timeouts are NOT retried.
 """
 
 from __future__ import annotations
@@ -10,6 +15,25 @@ import json
 import subprocess
 import time
 from dataclasses import dataclass
+
+# Retry policy for transient subprocess failures (OOM-SIGKILL, network blip).
+# Total worst-case added latency: 5 + 15 = 20s before final failure.
+MAX_RETRIES = 3  # total attempts including the initial one
+RETRY_BACKOFF_S = (5, 15)  # delays between attempts (attempt 1->2, attempt 2->3)
+
+# stderr substrings that indicate a NON-transient failure — don't retry these.
+NON_RETRYABLE_STDERR_MARKERS = (
+    "Invalid API key",
+    "authentication",
+    "Authentication",
+    "rate limit",
+    "Rate limit",
+    "quota",
+    "Quota",
+    "permission",
+    "403",
+    "401",
+)
 
 
 @dataclass
@@ -83,22 +107,51 @@ class ClaudeRunner:
             "--append-system-prompt",
             system_prompt,
         ]
-        start = time.monotonic()
-        try:
-            proc = subprocess.run(
-                cmd,
-                input=user_message,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout_s,
-                cwd=str(cwd) if cwd else None,
-            )
-        except subprocess.TimeoutExpired as e:
-            raise RunnerError(f"claude timed out after {self.timeout_s}s") from e
-        duration = time.monotonic() - start
-        if proc.returncode != 0:
-            raise RunnerError(f"claude exited rc={proc.returncode}\nstderr: {proc.stderr[:2000]}")
-        return _parse_stream_json(proc.stdout, duration)
+        last_err: RunnerError | None = None
+        for attempt_idx in range(MAX_RETRIES):
+            start = time.monotonic()
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    input=user_message,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout_s,
+                    cwd=str(cwd) if cwd else None,
+                )
+            except subprocess.TimeoutExpired as e:
+                # Timeouts are operation-level — don't retry, the operator
+                # likely needs to raise timeout_s or simplify the prompt.
+                raise RunnerError(f"claude timed out after {self.timeout_s}s") from e
+            duration = time.monotonic() - start
+            if proc.returncode == 0:
+                return _parse_stream_json(proc.stdout, duration)
+
+            # Non-zero rc — decide retry vs raise.
+            err_msg = f"claude exited rc={proc.returncode}\nstderr: {proc.stderr[:2000]}"
+            if _is_non_retryable(proc.stderr):
+                raise RunnerError(err_msg)
+            last_err = RunnerError(err_msg)
+            if attempt_idx < MAX_RETRIES - 1:
+                delay = RETRY_BACKOFF_S[attempt_idx]
+                # Brief signal to stdout so the operator sees retries happening
+                # in the live run log. stderr is preserved in last_err.
+                print(
+                    f"  [runner] rc={proc.returncode} (likely transient OOM); "
+                    f"retrying in {delay}s (attempt {attempt_idx + 2}/{MAX_RETRIES})"
+                )
+                time.sleep(delay)
+        assert last_err is not None
+        raise last_err
+
+
+def _is_non_retryable(stderr: str) -> bool:
+    """Return True if stderr indicates an auth/quota/permission failure that
+    retrying won't fix. Empty stderr → retryable (typical OOM-SIGKILL signature).
+    """
+    if not stderr:
+        return False
+    return any(marker in stderr for marker in NON_RETRYABLE_STDERR_MARKERS)
 
 
 def _parse_stream_json(stdout: str, duration: float) -> RunnerResult:

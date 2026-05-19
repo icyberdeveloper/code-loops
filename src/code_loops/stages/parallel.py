@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 
 from ..isolation import slice_questions_for_spec
+from ..parallelism import gather_chunked
 from ..runner import RunnerFactory, RunnerResult
 from .prompt import StageContext, load_agent_prompt
 
@@ -82,4 +83,5 @@ class ParallelStage:
             sys_prompt = load_agent_prompt(prompt_path, ctx)
             runner = self.factory.make(branch_def)
             tasks.append(asyncio.to_thread(runner.run, sys_prompt, user_message))
-        return await asyncio.gather(*tasks)
+        # Chunked to bound peak memory — see parallelism.gather_chunked.
+        return await gather_chunked(tasks)

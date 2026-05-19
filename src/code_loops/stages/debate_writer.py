@@ -33,6 +33,7 @@ from pathlib import Path
 from rich.console import Console
 
 from ..isolation import parse_perspectives
+from ..parallelism import gather_chunked
 from ..runner import ClaudeRunner, RunnerFactory, RunnerResult
 from .prompt import StageContext, load_agent_prompt
 from .role_normalizer import normalize_roles
@@ -307,7 +308,8 @@ async def _run_perspectives(
             "angle only."
         )
         tasks.append(asyncio.to_thread(runner.run, sys_prompt, user_msg))
-    return await asyncio.gather(*tasks)
+    # Chunked to bound peak memory — see parallelism.gather_chunked.
+    return await gather_chunked(tasks)
 
 
 def _append_debate(path: Path, header: str, body: str) -> None:
