@@ -65,7 +65,7 @@ preamble.
 ## Q2: ...
 ```
 
-After all Q1..QN, two mandatory final sections:
+After all Q1..QN, three mandatory final sections:
 
 ```
 ## Files impact summary
@@ -81,11 +81,44 @@ After all Q1..QN, two mandatory final sections:
    preserve the `## Rules` block contract.
 3. `tests/integration/test_<area>.py:45-90` — pattern for asserting
    prompt output shape.
+
+## Behavioral signal flow (palette of candidate fix locations)
+
+For the bug class this research investigates, enumerate WHERE in the
+user-observable signal flow the fix COULD live. List ≥3 distinct
+candidate layers — do NOT pick one. This is a PALETTE for the
+Software Architect, not a recommendation.
+
+- **Layer A: at symptom location** — patch the existing code where
+  the buggy behavior currently originates. Pros: minimal blast radius,
+  one file. Cons: bypass surfaces may emerge as edge cases route around
+  the patch (this has happened repeatedly — see redesign loops in
+  prior runs).
+- **Layer B: upstream of symptom** — intercept BEFORE the bug-prone
+  code receives its input. Pros: closes a class of inputs from ever
+  reaching the broken path. Cons: requires understanding upstream
+  contracts; may need defensive logic at the boundary.
+- **Layer C: downstream of symptom** — apply correction AFTER the
+  bug-prone code emits its output, before user sees it. Pros: one
+  chokepoint for all callers; can't be bypassed by control-flow
+  variants inside the broken code. Cons: works on already-emitted text.
+- **Layer D: outside the pipeline** — separate transform/filter that
+  runs on the pipeline's final output, independent of internal
+  control flow. Pros: structurally impossible to bypass; trust the
+  pipeline as black box. Cons: requires a clean output boundary.
+- **Layer E (when applicable): change the data, not the code** —
+  fix the input distribution (e.g. clean stub records, change schema)
+  so the buggy code path never trips. Pros: removes failure-mode
+  preconditions. Cons: data migration scope.
+
+If a candidate layer is not viable, say so explicitly with reason —
+silence is a false signal of "only Layer A works".
 ```
 
-These are NOT a replacement for RFC's `## File-level changes` — they're a
-hint for the Software Architect so they don't miss files or invent new ones, and a
-pointer for Coder/QA Engineer at downstream stages on what to read FIRST.
+These sections are NOT a replacement for RFC's `## File-level changes` — they're
+a hint for the Software Architect so they don't miss files OR locked into a
+single fix layer, and a pointer for Coder/QA Engineer at downstream stages on
+what to read FIRST.
 
 ## Rules
 

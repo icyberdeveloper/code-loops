@@ -21,32 +21,73 @@ You also have read access to the target project tree at
 verify file paths or check details that research surfaced but didn't fully
 quote.
 
-## Design space exploration (mandatory for non-trivial RFCs)
+## Phase 1: Design space exploration (MANDATORY, ALWAYS)
 
-**When to apply:** the RFC creates a new module / new primitive / changes
-an existing contract. **Do NOT apply** for trivial edits (typo, lint,
-single bugfix).
+This is your FIRST output, BEFORE any RFC content. It is not optional
+"for non-trivial RFCs" — it is the divergent-thinking step that prevents
+the documented failure mode: the architect anchors on where the symptom
+appeared (file/line/module from postmortem evidence or research forensic
+data) and produces an RFC patching that exact location, which is then
+rejected by review because critics find bypass surfaces — and the next
+RFC pass relocates the bypass without changing the structural class. To
+break that loop you must DELIBERATELY enumerate shapes at different
+structural axes BEFORE committing to one.
 
-Before `## Proposed approach`, explicitly list 6 possible solution shapes:
-- 3 high-probability (mainstream, low-risk) — explore different angles of
-  one general idea
-- 3 diverse (tail of distribution) — something structurally different:
-  another layer, another abstraction, another storage
+Start your output with:
 
-For each: 1 line of description + 1 line of trade-off.
+```
+## Shapes considered
 
-Then in `## Proposed approach` explicitly state: "Of the 6 shapes
-considered, #N was chosen because <reason>; #M was rejected because
-<reason>; the others — in `## Alternatives considered`".
+For each candidate, one line of description + one line of structural
+trade-off + one line of rejection or selection rationale.
 
-Goal: elegance/safety critics can see that the design space was surveyed,
-and won't propose an option you already rejected. This block may live at
-the top of the RFC before `## Context` — the engine does not parse it
-programmatically.
+**Axis 1: WHERE the fix lives in the signal flow**
+- A. At symptom location (patch existing code where bug originates): <trade-off>
+- B. Upstream of symptom (intercept before broken code receives input): <trade-off>
+- C. Downstream of symptom (transform output before user sees it): <trade-off>
+- D. Outside the pipeline (separate filter/transform on pipeline output): <trade-off>
+- E (when applicable). Data-level (fix input distribution so broken path doesn't trip): <trade-off>
 
-## Output structure
+**Axis 2: WHAT KIND of intervention**
+- F. Deterministic predicate / pure function: <trade-off>
+- G. LLM judge / classifier: <trade-off>
+- H. Schema / contract change (type-level prevention): <trade-off>
+- I. Library/dependency adoption (existing primitive solves it): <trade-off>
 
-Always start with `# RFC: <short title>`. No preamble.
+Cross-axis chosen shape: <Axis 1 letter> × <Axis 2 letter>.
+**Rationale** (3-5 sentences): why this combination, what it sacrifices,
+what it gains. Include explicit acknowledgement of which Axis-1 candidate
+you considered AND REJECTED (not just "didn't pick") — and why
+relocating to that layer would NOT close the bug class better.
+
+**Postmortem-mode constraint** (when input is from a postmortem):
+the forensic section of the PRD names the historical symptom location.
+Your chosen Axis-1 letter is NOT required to match. If you pick Axis 1
+letter "A" (at symptom location), you MUST justify in 2 sentences why
+relocating to a different layer (B/C/D) does NOT structurally close
+the bug class better. Default assumption: postmortem fixes benefit from
+layer B/C/D because Layer A repeatedly produces bypass-surface migration.
+
+**Revision-mode constraint** (when this is a post-redesign RFC pass):
+your chosen Axis-1 letter MUST differ from the prior pass's letter.
+If pass_1 used Axis 1 = A, you cannot use A again. The redesign signal
+exists because the prior shape was structurally rejected by critics;
+producing another shape on the same axis re-triggers the same rejection.
+
+## End of Phase 1 — proceed to Phase 2
+```
+
+After this block, continue with the regular RFC body (Phase 2 below).
+The engine does not parse Phase 1 programmatically — but critics WILL
+read it and verify your chosen axis matches your Phase 2 implementation.
+Saying "I picked Axis 1 = C (downstream)" then implementing a patch
+inside the broken module is the exact contradiction critics catch.
+
+## Phase 2: RFC output structure
+
+Always start (after Phase 1's `## Shapes considered` block) with
+`# RFC: <short title>`. No preamble between Phase 1 and Phase 2 other
+than the `## End of Phase 1` marker.
 
 ```
 # RFC: <title>

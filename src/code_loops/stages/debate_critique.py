@@ -277,6 +277,30 @@ class DebateCritiqueStage:
         # — both are bubbled back to the design stage by engine.py.
         if verdict_status in ("redesign_needed", "needs_revision_max_rounds"):
             signal_path = ctx.task_dir / "design" / "redesign_signal.md"
+            # Constraint shared by both verdict modes: force layer relocation,
+            # not patching. Architect bias documented in run #3 — without this
+            # constraint, the architect keeps the same shape and just patches
+            # the most-recent bypass surface, regenerating the rejection.
+            shape_shift_constraint = (
+                "## Mandatory shape shift (binding constraint)\n\n"
+                "Your next RFC's `## Shapes considered` block (Phase 1) MUST "
+                "pick a DIFFERENT Axis-1 layer than the prior pass. The prior "
+                "pass's chosen layer is documented in `design/previous_rfc.md` "
+                "under its Phase 1 block.\n\n"
+                "**Axis-1 layers** (see software-architect.md Phase 1):\n"
+                "- A. At symptom location (patch existing code where bug originates)\n"
+                "- B. Upstream of symptom (intercept before broken code receives input)\n"
+                "- C. Downstream of symptom (transform output before user sees it)\n"
+                "- D. Outside the pipeline (separate filter/transform on pipeline output)\n"
+                "- E. Data-level (fix input distribution so broken path doesn't trip)\n\n"
+                "If the prior pass picked A → your new pass must pick B, C, D, or E. "
+                "Producing another A-shape RFC (even with different internals) will "
+                "re-trigger the same critic rejection — the recurring theme "
+                "documents that the *layer* is the problem, not the implementation "
+                "within it. Justify your new Axis-1 choice in 2+ sentences in "
+                "Phase 1 prose with explicit reference to why the prior layer "
+                "produced the bypass-surface pattern.\n\n"
+            )
             if verdict_status == "redesign_needed":
                 signal_body = (
                     f"The previous RFC was rejected after critique because the same "
@@ -288,11 +312,13 @@ class DebateCritiqueStage:
                     f"See `design/previous_rfc.md` for the full prior attempt. "
                     f"Critique reasoning:\n\n> {verdict_reason}\n\n"
                     f"## Design guidance\n\n{design_guidance}\n\n"
+                    f"{shape_shift_constraint}"
                     f"## Your task\n\n"
                     f"Produce a fundamentally different shape of solution — do NOT "
                     f"patch the variants of `{recurring_theme}` that the previous "
                     f"approach exhibited. The new approach should make those "
-                    f"failure modes structurally impossible, not handled.\n"
+                    f"failure modes structurally impossible, not handled. The "
+                    f"shape shift above is binding.\n"
                 )
             else:  # needs_revision_max_rounds
                 signal_body = (
@@ -305,11 +331,13 @@ class DebateCritiqueStage:
                     f"See `design/previous_rfc.md` for the final RFC state. "
                     f"Facilitator reasoning (last round):\n\n> {verdict_reason}\n\n"
                     f"## Unresolved concerns from the final round\n\n{design_guidance}\n\n"
+                    f"{shape_shift_constraint}"
                     f"## Your task\n\n"
                     f"The iterative-revision path was exhausted without convergence. "
                     f"Step back and produce a fundamentally different shape — do NOT "
                     f"keep tweaking the same RFC's edges. Pick a different approach "
-                    f"that closes the unresolved concerns structurally.\n"
+                    f"that closes the unresolved concerns structurally. The shape "
+                    f"shift above is binding.\n"
                 )
             signal_path.write_text("# Redesign signal\n\n" + signal_body)
             # Snapshot the rejected RFC for the writer to reference

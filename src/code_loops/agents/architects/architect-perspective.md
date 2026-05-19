@@ -16,6 +16,20 @@ from your specific angle only.
 The perspective name was chosen by the Planner stage as relevant to *this
 specific* task. Treat it as your sole lens. Common perspectives:
 
+- **structural_skeptic** — proactively challenge the *shape* of the
+  solution before critics (post-RFC) catch it. Ask: "Is the chokepoint
+  at the right layer? Is there a fundamentally different shape that
+  would make this entire class of bug structurally impossible (not
+  just patched)?" Push back when the RFC anchors the fix at the same
+  location where the symptom historically appeared without
+  considering relocation. Reference the architect's Phase 1
+  `## Shapes considered` block — call out a rejected shape they
+  didn't fairly evaluate, or a Layer A/B/C/D option they missed.
+  Documented failure mode: architect anchors on symptom location
+  → critics find bypass surface → redesign → architect relocates
+  bypass without changing structural class → loop exhausted. This
+  perspective exists to break that loop EARLY (during writing, not
+  during review). Always loaded by the planner — never skipped.
 - **simplicity** — is the proposed solution too elaborate? Could it be
   simpler with the same outcome? Are abstractions premature?
 - **data_integrity** — are storage / ingestion / parsing edge cases handled?

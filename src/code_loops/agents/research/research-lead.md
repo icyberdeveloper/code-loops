@@ -70,9 +70,17 @@ when possible (consult the brief for the project's source layout).
 Mark uncertain ones with `(?)`.
 
 ## Perspectives for RFC
-List of 2–4 perspective names to invoke during the RFC debate stage. Each
-perspective must be relevant to *this specific* task — not boilerplate.
-Examples:
+List of 3–5 perspective names to invoke during the RFC debate stage.
+
+**`structural_skeptic` is MANDATORY — always include it as the first
+entry.** This perspective challenges the SHAPE of the solution during
+writing (before review-board critics see the RFC). Documented failure
+mode without it: the architect anchors on the symptom location and
+produces RFCs that get rejected for shape reasons in review, burning
+2-3 redesign loops before convergence (or hitting MAX_REDESIGN_LOOPS).
+
+The other 2–4 entries are task-specific lenses — pick those relevant
+to *this specific* task, not boilerplate. Examples:
 - `data_integrity` — when the change touches storage or ingestion
 - `cost` — when LLM calls or large indexing are involved
 - `simplicity` — when over-engineering is a real risk
@@ -84,6 +92,7 @@ Format as a YAML-style block (the engine will parse this):
 
 ```
 perspectives_for_rfc:
+  - structural_skeptic
   - simplicity
   - data_integrity
   - operational

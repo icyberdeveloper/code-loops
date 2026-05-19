@@ -114,29 +114,63 @@ theater, not measurable.
 Produce a single Markdown document. No preamble, no closing remarks. Start
 directly with `# PRD: <short title derived from the input>`.
 
-Required sections (in this order):
+The PRD has TWO distinct layers — keep them separated. The behavioral
+layer constrains downstream solution shape; the forensic layer is
+historical evidence that informs research but does NOT constrain
+where the fix lives.
+
+### Layer 1: Behavioral framing (required sections, in this order)
 
 ```
 # PRD: <short title>
 
 ## Problem
-1–3 sentences. What's broken or missing today.
+1–3 sentences. What's broken or missing today, described in
+user-observable terms. NO file paths, function names, line numbers,
+or module names — those are forensic data, not problem statement.
 
 ## Target behavior
-2–5 sentences or a bullet list. What we want to be true once this is done.
+2–5 sentences or a bullet list. What we want to be true once this
+is done, from the user's or external observer's perspective.
 
 ## Success criteria
 Bullet list of testable conditions. Each starts with a verb
 (e.g. "Output omits irrelevant items", "When X happens, Y is logged").
+Verifiable without knowing implementation internals.
 
 ## Scope
-Bullet list of concrete pieces this work will touch.
+Bullet list of behavioral surfaces this work touches (e.g. "the flow
+from LLM output to user-delivered message", "any caller that emits
+AI-generated text to Telegram"). NOT a list of files or functions.
 
 ## Non-goals
-Bullet list of what is explicitly NOT in scope.
+Bullet list of what is explicitly NOT in scope, in behavioral terms.
 ```
 
-Optional sections (include only when needed):
+### Layer 2: Forensic evidence (postmortem mode only)
+
+When input is a postmortem, append this section AT THE END. It
+preserves verbatim file paths, function names, line numbers, error
+patterns for downstream research — but explicitly disclaims that
+these are NOT scope constraints.
+
+```
+## Postmortem evidence
+
+> Historical observations from the input postmortem documenting
+> WHERE and HOW the symptom manifested in the codebase as of <date>.
+> This section is FORENSIC DATA for downstream research — it is NOT
+> a scope constraint on where the fix must live. The behavioral
+> framing above is the only authoritative scope. The fix may live
+> at a structurally different layer than where the symptom appeared.
+
+- <file:line> — <what was observed there>
+- <function/module name> — <what behavior originated there>
+- <error pattern> — <how often, distribution>
+- ...
+```
+
+### Optional sections
 
 ```
 ## Assumptions
@@ -150,6 +184,22 @@ the input is unambiguous.
   shown above.
 - WHAT and WHY only — no technical solution. The HOW lives in the RFC stage
   later in the pipeline.
+- **Anti-anchoring** (mandatory hard-checker): after drafting, scan Layer 1
+  sections (Problem / Target behavior / Success criteria / Scope / Non-goals)
+  for any of:
+  - file paths (`*.py`, `app/...`, `src/...`)
+  - line numbers (`:166`, `lines 163-177`)
+  - function names with parens (`_collect_*()`, `check_spelling()`)
+  - module names (`ResponseValidator`, `Step 1.5`, `Stage X`)
+
+  If any appear in Layer 1 → REWRITE that sentence in behavioral terms
+  and move the technical reference to `## Postmortem evidence`. This is
+  not a stylistic preference — it prevents the architect from anchoring
+  the fix at the same location where the symptom historically appeared,
+  which has been a documented failure mode (architect produces RFC after
+  RFC that patches the symptom location instead of fixing the structural
+  cause at a different layer).
+
 - If the input is genuinely too vague to write a PRD (no problem statement, no
   goal, no signal of intent), return a single section
   `# Need clarification` listing 2–4 specific questions and stop.

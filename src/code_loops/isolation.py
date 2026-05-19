@@ -10,18 +10,27 @@ from __future__ import annotations
 
 import re
 
+MANDATORY_PERSPECTIVE = "structural_skeptic"
+
 
 def parse_perspectives(plan_md: str) -> list[str]:
     """Extract perspective names from the perspectives_for_rfc YAML block in plan.md.
 
     Expected block format:
         perspectives_for_rfc:
+          - structural_skeptic
           - simplicity
           - data_integrity
           - operational
 
     Returns a safe default if the block is missing or malformed so the
     pipeline can still proceed without a useless crash.
+
+    Defense-in-depth: prepends MANDATORY_PERSPECTIVE if the planner
+    forgot it. This perspective breaks the architect-blind-spot loop
+    documented in run #3 (3 redesign loops, all rejected on same theme
+    `validator_pipeline_trust_drift` because architect anchored on
+    symptom location each time).
     """
     pattern = re.compile(
         r"perspectives_for_rfc:\s*\n((?:\s*-\s*[\w_]+\s*\n?)+)",
@@ -29,13 +38,17 @@ def parse_perspectives(plan_md: str) -> list[str]:
     )
     m = pattern.search(plan_md)
     if not m:
-        return ["simplicity", "correctness"]
+        return [MANDATORY_PERSPECTIVE, "simplicity", "correctness"]
     perspectives: list[str] = []
     for line in m.group(1).splitlines():
         stripped = line.strip()
         if stripped.startswith("-"):
             perspectives.append(stripped[1:].strip())
-    return perspectives or ["simplicity", "correctness"]
+    if not perspectives:
+        return [MANDATORY_PERSPECTIVE, "simplicity", "correctness"]
+    if MANDATORY_PERSPECTIVE not in perspectives:
+        perspectives.insert(0, MANDATORY_PERSPECTIVE)
+    return perspectives
 
 
 def slice_questions_for_spec(plan_md: str, spec: str) -> str:

@@ -23,7 +23,9 @@ from tests.conftest import FakeFactory
 # ---- parse_perspectives ----
 
 
-def test_parse_perspectives_extracts_block():
+def test_parse_perspectives_extracts_block_and_injects_mandatory():
+    """structural_skeptic is auto-injected at position 0 if planner omitted it
+    (defense-in-depth — see isolation.MANDATORY_PERSPECTIVE rationale)."""
     plan = """\
 # Plan
 
@@ -36,17 +38,32 @@ perspectives_for_rfc:
   - operational
 ```
 """
-    assert parse_perspectives(plan) == ["simplicity", "data_integrity", "operational"]
+    assert parse_perspectives(plan) == [
+        "structural_skeptic",
+        "simplicity",
+        "data_integrity",
+        "operational",
+    ]
+
+
+def test_parse_perspectives_preserves_order_when_mandatory_already_present():
+    plan = """\
+perspectives_for_rfc:
+  - structural_skeptic
+  - simplicity
+  - operational
+"""
+    assert parse_perspectives(plan) == ["structural_skeptic", "simplicity", "operational"]
 
 
 def test_parse_perspectives_returns_default_when_block_missing():
     plan = "# Plan\n\nno block here\n"
-    assert parse_perspectives(plan) == ["simplicity", "correctness"]
+    assert parse_perspectives(plan) == ["structural_skeptic", "simplicity", "correctness"]
 
 
-def test_parse_perspectives_strips_whitespace():
+def test_parse_perspectives_strips_whitespace_and_injects_mandatory():
     plan = "perspectives_for_rfc:\n   -   foo\n   -   bar\n"
-    assert parse_perspectives(plan) == ["foo", "bar"]
+    assert parse_perspectives(plan) == ["structural_skeptic", "foo", "bar"]
 
 
 # ---- _new_concerns_budget ----
@@ -167,12 +184,13 @@ def _stage_def(max_rounds: int = 10) -> dict:
 
 
 def test_debate_converges_first_round(tmp_path):
-    """Writer drafts → 2 perspectives critique → facilitator says converged.
-    Final.md = draft_v1 contents.
+    """Writer drafts → 3 perspectives (structural_skeptic auto-injected + 2
+    declared) critique → facilitator says converged. Final.md = draft_v1.
     """
     repo, task_dir = _make_repo_and_task(tmp_path, ["simplicity", "operational"])
     responses = [
         RunnerResult(text="# RFC: X\n\n## Context\nctx", cost_usd=0.10, duration_s=5.0),
+        RunnerResult(text="# Perspective: structural_skeptic\nok", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text="# Perspective: simplicity\nok", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text="# Perspective: operational\nok", cost_usd=0.05, duration_s=3.5),
         RunnerResult(text=_verdict_block(True, "All addressed"), cost_usd=0.03, duration_s=2.0),
@@ -193,26 +211,28 @@ def test_debate_converges_first_round(tmp_path):
     # Bug E fix: converge at round N → rounds == N (not N-1). One round of
     # critique happened, even though only draft_v1 exists (no revision needed).
     assert result["rounds"] == 1
-    assert result["cost_usd"] == pytest.approx(0.23)
-    assert len(runner.calls) == 4
+    assert result["cost_usd"] == pytest.approx(0.28)
+    assert len(runner.calls) == 5
 
 
 def test_debate_two_rounds_then_converges(tmp_path):
     """Round 1: not converged → writer revises → Round 2: converged.
-    Final.md = draft_v2.
+    Final.md = draft_v2. 3 perspectives per round (structural_skeptic auto-injected).
     """
     repo, task_dir = _make_repo_and_task(tmp_path, ["simplicity", "data_integrity"])
     responses = [
         # Initial draft
         RunnerResult(text="DRAFT V1", cost_usd=0.10, duration_s=5.0),
-        # Round 1 perspectives
+        # Round 1 perspectives (3: structural_skeptic + simplicity + data_integrity)
+        RunnerResult(text="P0 round1", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text="P1 round1", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text="P2 round1", cost_usd=0.05, duration_s=3.0),
         # Round 1 facilitator: not converged
         RunnerResult(text=_verdict_block(False, "still issues"), cost_usd=0.03, duration_s=2.0),
         # Writer revision → draft_v2
         RunnerResult(text="DRAFT V2", cost_usd=0.10, duration_s=5.0),
-        # Round 2 perspectives
+        # Round 2 perspectives (3)
+        RunnerResult(text="P0 round2", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text="P1 round2", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text="P2 round2", cost_usd=0.05, duration_s=3.0),
         # Round 2 facilitator: converged
@@ -230,21 +250,24 @@ def test_debate_two_rounds_then_converges(tmp_path):
     assert result["converged"] is True
     # Bug E fix: 2 rounds executed, converge at R2 → rounds == 2 (not 1).
     assert result["rounds"] == 2
-    assert len(runner.calls) == 8
+    assert len(runner.calls) == 10
 
 
 def test_debate_max_rounds_falls_back_to_last_draft(tmp_path):
     """Facilitator never converges; max_rounds=2 hit; final = latest draft."""
+    # 2 perspectives per round (structural_skeptic auto-injected + 1 declared).
     repo, task_dir = _make_repo_and_task(tmp_path, ["simplicity"])
     stage_def = _stage_def(max_rounds=2)
     responses = [
         # Initial
         RunnerResult(text="DRAFT V1", cost_usd=0.10, duration_s=5.0),
-        # Round 1
+        # Round 1 (2 perspectives)
+        RunnerResult(text="P0 round1", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text="P1 round1", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text=_verdict_block(False), cost_usd=0.03, duration_s=2.0),
         RunnerResult(text="DRAFT V2", cost_usd=0.10, duration_s=5.0),
-        # Round 2
+        # Round 2 (2 perspectives)
+        RunnerResult(text="P0 round2", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text="P1 round2", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text=_verdict_block(False), cost_usd=0.03, duration_s=2.0),
     ]
@@ -261,11 +284,14 @@ def test_debate_max_rounds_falls_back_to_last_draft(tmp_path):
 
 
 def test_perspectives_get_only_draft_not_research(tmp_path):
-    """Hard isolation: perspective agents must not see research/* in their messages."""
+    """Hard isolation: perspective agents must not see research/* in their messages.
+    2 perspectives total (structural_skeptic auto-injected + 1 declared).
+    """
     repo, task_dir = _make_repo_and_task(tmp_path, ["simplicity"])
     responses = [
         RunnerResult(text="DRAFT", cost_usd=0.10, duration_s=5.0),
-        RunnerResult(text="P1", cost_usd=0.05, duration_s=3.0),
+        RunnerResult(text="P0_skeptic", cost_usd=0.05, duration_s=3.0),
+        RunnerResult(text="P1_simplicity", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text=_verdict_block(True), cost_usd=0.03, duration_s=2.0),
     ]
     runner = ScriptedRunner(responses)
@@ -274,9 +300,11 @@ def test_perspectives_get_only_draft_not_research(tmp_path):
 
     stage.run(_stage_def(), ctx)
 
-    # Perspective call is index 1 (0=writer initial, 1=p1, 2=facilitator)
-    sys_prompt, user_msg = runner.calls[1]
-    assert "PERSPECTIVE for simplicity" in sys_prompt
+    # Perspective calls are index 1 (structural_skeptic) + 2 (simplicity); index 3 = facilitator
+    sys_prompt_skeptic, _ = runner.calls[1]
+    sys_prompt_simpl, user_msg = runner.calls[2]
+    assert "PERSPECTIVE for structural_skeptic" in sys_prompt_skeptic
+    assert "PERSPECTIVE for simplicity" in sys_prompt_simpl
     assert "current draft" in user_msg
     assert "DRAFT" in user_msg
     # Hard isolation invariants:
@@ -286,16 +314,20 @@ def test_perspectives_get_only_draft_not_research(tmp_path):
 
 
 def test_writer_revision_sees_only_previous_draft_and_this_round(tmp_path):
-    """Writer revision must NOT see debate.md history, only the current round's perspectives."""
+    """Writer revision must NOT see debate.md history, only this round's perspectives.
+    2 perspectives per round (structural_skeptic auto-injected + 1 declared).
+    """
     repo, task_dir = _make_repo_and_task(tmp_path, ["simplicity"])
     responses = [
         RunnerResult(text="DRAFT V1", cost_usd=0.10, duration_s=5.0),
-        # Round 1
+        # Round 1 (2 perspectives)
+        RunnerResult(text="P0 round1 — skeptic", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text="P1 round1 — concern X", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text=_verdict_block(False), cost_usd=0.03, duration_s=2.0),
         # Revision
         RunnerResult(text="DRAFT V2", cost_usd=0.10, duration_s=5.0),
-        # Round 2 — converge
+        # Round 2 — converge (2 perspectives)
+        RunnerResult(text="P0 round2", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text="P1 round2", cost_usd=0.05, duration_s=3.0),
         RunnerResult(text=_verdict_block(True), cost_usd=0.03, duration_s=2.0),
     ]
@@ -305,12 +337,13 @@ def test_writer_revision_sees_only_previous_draft_and_this_round(tmp_path):
 
     stage.run(_stage_def(), ctx)
 
-    # Writer revision is call index 3 (0=init, 1=p1r1, 2=fac1, 3=writer-revise)
-    sys_prompt, user_msg = runner.calls[3]
+    # Writer revision call: 0=init, 1=p0, 2=p1, 3=fac1, 4=writer-revise
+    sys_prompt, user_msg = runner.calls[4]
     assert "WRITER" in sys_prompt
     assert "previous_draft.md (v1)" in user_msg
     assert "DRAFT V1" in user_msg
     assert "P1 round1 — concern X" in user_msg
+    assert "P0 round1 — skeptic" in user_msg
     # Should NOT contain the full debate.md (which includes "Round 0 — Writer initial draft")
     assert "Round 0 — Writer initial draft" not in user_msg
     assert "facilitator" not in user_msg
