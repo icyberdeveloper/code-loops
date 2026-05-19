@@ -34,6 +34,8 @@ from rich.console import Console
 
 from ..isolation import parse_perspectives
 from ..parallelism import gather_chunked
+from ..rendering.rfc_renderer import render_rfc
+from ..rfc_schema import build_rfc_schema
 from ..runner import ClaudeRunner, RunnerFactory, RunnerResult
 from .prompt import StageContext, load_agent_prompt
 from .role_normalizer import normalize_roles
@@ -83,6 +85,43 @@ class DebateWriterStage:
             f"=== research/{p.name} ===\n{p.read_text()}" for p in sorted(research_dir.glob("*.md"))
         )
 
+        # Evidence из Phase 1 (evidence_extractor stage). Когда есть —
+        # используется как источник enum для file_path в RFC schema
+        # (constrained decoding не даст архитектору эмиттить path не из
+        # evidence.verified_files). Когда отсутствует (legacy / tests) —
+        # build_rfc_schema(None) даёт schema без enum constraint, RFC
+        # генерится без защиты от фабрикации (backward compat).
+        evidence_path = work_dir / "evidence.json"
+        if not evidence_path.exists():
+            # Резерв на pass_1/evidence.json или плоский (legacy)
+            for candidate in (out_dir / "pass_1" / "evidence.json", out_dir / "evidence.json"):
+                if candidate.exists():
+                    evidence_path = candidate
+                    break
+        evidence: dict | None = None
+        if evidence_path.exists():
+            try:
+                evidence = json.loads(evidence_path.read_text())
+            except json.JSONDecodeError:
+                console.print(
+                    f"  [yellow]rfc:[/yellow] evidence.json не парсится "
+                    f"({evidence_path}) — продолжаю без enum constraint"
+                )
+                evidence = None
+        rfc_schema = build_rfc_schema(evidence)
+        evidence_block = ""
+        if evidence is not None:
+            n_files = len(evidence.get("verified_files", []))
+            n_symbols = len(evidence.get("verified_symbols", []))
+            evidence_block = (
+                f"=== design/evidence.json (Phase 1 verified ground truth) ===\n"
+                f"{evidence_path.read_text()}\n\n"
+                f"Above is the ONLY source of truth for existing-code references. "
+                f"file_changes[].path is enum-constrained to evidence.verified_files "
+                f"({n_files} files, {n_symbols} symbols). You physically cannot cite "
+                f"a file not in this list — for new files use new_files_proposed.\n\n"
+            )
+
         writer_runner = self.factory.make(roles["writer"])
         perspective_runner = self.factory.make(roles["perspective"])
         facilitator_runner = self.factory.make(roles["facilitator"])
@@ -118,6 +157,7 @@ class DebateWriterStage:
                 else ""
             )
             initial_msg = (
+                f"{evidence_block}"
                 f"{redesign_block}"
                 f"{previous_block}"
                 f"=== research_plan/plan.md ===\n{plan_md}\n\n"
@@ -134,17 +174,25 @@ class DebateWriterStage:
                 f"({len(perspectives)} perspectives queued, max_rounds={max_rounds})"
             )
             initial_msg = (
+                f"{evidence_block}"
                 f"=== research_plan/plan.md ===\n{plan_md}\n\n"
                 f"{research_blocks}\n\n"
                 "Produce the initial RFC draft (round 0). Perspective agents will critique "
                 "it next."
             )
-        result = writer_runner.run(writer_sys, initial_msg)
+        # output_schema = RFC JSON. Когда evidence есть, file_changes[].path
+        # имеет enum из evidence.verified_files — constrained decoding не
+        # даст эмиттить path не из evidence. Renderer затем конвертит JSON
+        # в markdown для downstream stages.
+        result = writer_runner.run(writer_sys, initial_msg, output_schema=rfc_schema)
         cost_total += result.cost_usd or 0
         draft_version = 1
+        # Сохраняем оба артефакта: .json как machine-readable ground truth
+        # (использует mechanical validator если будет), .md для humans и
+        # downstream consumers.
+        draft_md = _draft_to_markdown(result, work_dir, draft_version)
         draft_path = work_dir / f"draft_v{draft_version}.md"
-        draft_path.write_text(result.text)
-        _append_debate(debate_path, "Round 0 — Writer initial draft (v1)", result.text)
+        _append_debate(debate_path, "Round 0 — Writer initial draft (v1)", draft_md)
         console.print(
             f"  [dim]rfc:[/dim] ✓ draft_v1 ({result.duration_s:.0f}s, ${result.cost_usd or 0:.2f})"
         )
@@ -215,23 +263,23 @@ class DebateWriterStage:
                 for spec, r in zip(perspectives, persp_results, strict=True)
             )
             revise_msg = (
+                f"{evidence_block}"
                 f"=== previous_draft.md (v{draft_version}) ===\n{current_draft}\n\n"
                 f"=== perspective_responses (round {round_n}) ===\n{persp_block}\n\n"
                 "Read each perspective response. Produce a fully revised RFC that "
                 "addresses every substantive concern. Disagreements may be acknowledged "
-                "and explained inline rather than capitulated to. End with "
-                f"`## Revision notes for round {round_n}` listing what changed by "
-                "perspective name."
+                "and explained inline rather than capitulated to. Fill `revision_notes` "
+                f"with what changed by perspective name in round {round_n}."
             )
-            revise_result = writer_runner.run(writer_sys, revise_msg)
+            revise_result = writer_runner.run(writer_sys, revise_msg, output_schema=rfc_schema)
             cost_total += revise_result.cost_usd or 0
             draft_version += 1
+            draft_md = _draft_to_markdown(revise_result, work_dir, draft_version)
             draft_path = work_dir / f"draft_v{draft_version}.md"
-            draft_path.write_text(revise_result.text)
             _append_debate(
                 debate_path,
                 f"Round {round_n} — Writer revision (v{draft_version})",
-                revise_result.text,
+                draft_md,
             )
             console.print(
                 f"  [dim]rfc:[/dim] ✓ draft_v{draft_version} "
@@ -310,6 +358,27 @@ async def _run_perspectives(
         tasks.append(asyncio.to_thread(runner.run, sys_prompt, user_msg))
     # Chunked to bound peak memory — see parallelism.gather_chunked.
     return await gather_chunked(tasks)
+
+
+def _draft_to_markdown(result: RunnerResult, work_dir: Path, draft_version: int) -> str:
+    """Сохраняет draft в двух форматах и возвращает markdown content.
+
+    Если result.parsed_json есть (output_schema был задан) — сохраняем
+    .json как ground truth + рендерим .md из JSON. Если parsed_json
+    отсутствует (legacy / fallback на free-form) — пишем raw text как
+    .md без .json.
+    """
+    md_path = work_dir / f"draft_v{draft_version}.md"
+    if result.parsed_json is not None:
+        json_path = work_dir / f"draft_v{draft_version}.json"
+        json_path.write_text(json.dumps(result.parsed_json, indent=2, ensure_ascii=False))
+        md = render_rfc(result.parsed_json)
+    else:
+        # Schema не использовался или ответ не распарсился. Сохраняем
+        # сырой text — downstream consumers продолжат читать markdown.
+        md = result.text
+    md_path.write_text(md)
+    return md
 
 
 def _append_debate(path: Path, header: str, body: str) -> None:

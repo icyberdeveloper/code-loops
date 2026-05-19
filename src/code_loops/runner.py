@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # Retry policy for transient subprocess failures (OOM-SIGKILL, network blip).
 # Total worst-case added latency: 5 + 15 = 20s before final failure.
@@ -43,6 +43,15 @@ class RunnerResult:
     duration_s: float = 0.0
     in_tokens: int | None = None
     out_tokens: int | None = None
+    # Распарсенный JSON если вызов был с output_schema (constrained decoding).
+    # Когда задан — `text` всё ещё содержит сырой output (для логов / отладки),
+    # `parsed_json` — уже распарсенный dict готовый к использованию.
+    parsed_json: dict | None = None
+    # Список tool_use/tool_result событий из stream-json для аудита.
+    # Каждый элемент: {"name": "Bash", "input": {...}, "output": "..."}.
+    # Critic на этапе ревью может использовать это как ground truth
+    # против фабрикации в финальном тексте модели.
+    tool_events: list[dict] = field(default_factory=list)
 
 
 class RunnerError(RuntimeError):
@@ -90,7 +99,20 @@ class ClaudeRunner:
         user_message: str,
         *,
         cwd: str | None = None,
+        output_schema: dict | None = None,
+        allowed_tools: list[str] | None = None,
     ) -> RunnerResult:
+        """Запускает claude CLI.
+
+        output_schema: JSON Schema (dict). Когда задан — добавляется
+        --json-schema, CLI делает constrained decoding на уровне токенов
+        (grammar-constrained sampling, см. Anthropic docs про structured
+        outputs). Финальный text гарантированно валидный JSON.
+
+        allowed_tools: явный список разрешённых tools (например
+        ["Bash", "Read", "Grep", "Glob"]). Когда задан — добавляется
+        --allowed-tools, агент не сможет использовать tools вне списка.
+        """
         cmd = [
             "claude",
             "--print",
@@ -107,6 +129,13 @@ class ClaudeRunner:
             "--append-system-prompt",
             system_prompt,
         ]
+        if output_schema is not None:
+            cmd.extend(["--json-schema", json.dumps(output_schema)])
+        if allowed_tools is not None:
+            # CLI принимает comma-separated либо space-separated; передаём
+            # comma-separated одной строкой чтобы избежать неоднозначности
+            # с дальнейшими аргументами.
+            cmd.extend(["--allowed-tools", ",".join(allowed_tools)])
         last_err: RunnerError | None = None
         for attempt_idx in range(MAX_RETRIES):
             start = time.monotonic()
@@ -125,7 +154,9 @@ class ClaudeRunner:
                 raise RunnerError(f"claude timed out after {self.timeout_s}s") from e
             duration = time.monotonic() - start
             if proc.returncode == 0:
-                return _parse_stream_json(proc.stdout, duration)
+                return _parse_stream_json(
+                    proc.stdout, duration, expect_json=output_schema is not None
+                )
 
             # Non-zero rc — decide retry vs raise.
             err_msg = f"claude exited rc={proc.returncode}\nstderr: {proc.stderr[:2000]}"
@@ -154,12 +185,27 @@ def _is_non_retryable(stderr: str) -> bool:
     return any(marker in stderr for marker in NON_RETRYABLE_STDERR_MARKERS)
 
 
-def _parse_stream_json(stdout: str, duration: float) -> RunnerResult:
+def _parse_stream_json(stdout: str, duration: float, *, expect_json: bool = False) -> RunnerResult:
+    """Парсит stream-json вывод claude CLI.
+
+    Собирает:
+      - text chunks (для финального result.text)
+      - tool_use блоки и сопоставляет их с tool_result по id
+        → RunnerResult.tool_events используется critic'ом для аудита
+
+    expect_json: когда True (вызов был с output_schema), финальный текст
+    парсится как JSON в RunnerResult.parsed_json. Если парсинг не удался —
+    parsed_json остаётся None, text всё ещё содержит сырой output.
+    """
     text_chunks: list[str] = []
     cost: float | None = None
     in_tok: int | None = None
     out_tok: int | None = None
     final_result: str | None = None
+    # Сопоставление tool_use_id → запись о tool call (для парного tool_result).
+    tool_calls: dict[str, dict] = {}
+    # Порядок вызовов — важен для аудита: critic видит хронологию.
+    tool_call_order: list[str] = []
 
     for line in stdout.splitlines():
         line = line.strip()
@@ -173,8 +219,32 @@ def _parse_stream_json(stdout: str, duration: float) -> RunnerResult:
         if etype == "assistant":
             msg = event.get("message", {})
             for block in msg.get("content", []):
-                if block.get("type") == "text":
+                btype = block.get("type")
+                if btype == "text":
                     text_chunks.append(block.get("text", ""))
+                elif btype == "tool_use":
+                    tu_id = block.get("id")
+                    if tu_id:
+                        tool_calls[tu_id] = {
+                            "name": block.get("name", ""),
+                            "input": block.get("input", {}),
+                            "output": None,
+                        }
+                        tool_call_order.append(tu_id)
+        elif etype == "user":
+            # tool_result события приходят как user message content blocks
+            msg = event.get("message", {})
+            for block in msg.get("content", []):
+                if block.get("type") == "tool_result":
+                    tu_id = block.get("tool_use_id")
+                    content = block.get("content")
+                    # content может быть строкой или списком {type: text, text: ...}
+                    if isinstance(content, list):
+                        content = "\n".join(
+                            c.get("text", "") for c in content if c.get("type") == "text"
+                        )
+                    if tu_id and tu_id in tool_calls:
+                        tool_calls[tu_id]["output"] = content
         elif etype == "result":
             cost = event.get("total_cost_usd") or event.get("cost_usd")
             usage = event.get("usage", {}) or {}
@@ -184,10 +254,22 @@ def _parse_stream_json(stdout: str, duration: float) -> RunnerResult:
                 final_result = event["result"]
 
     text = final_result if final_result is not None else "".join(text_chunks)
+    parsed_json: dict | None = None
+    if expect_json and text:
+        try:
+            parsed_json = json.loads(text)
+        except json.JSONDecodeError:
+            # Constrained decoding должен гарантировать валидный JSON.
+            # Если не получилось — оставляем None, caller увидит и решит
+            # что делать (retry, fallback, error).
+            parsed_json = None
+
     return RunnerResult(
         text=text,
         cost_usd=cost,
         duration_s=duration,
         in_tokens=in_tok,
         out_tokens=out_tok,
+        parsed_json=parsed_json,
+        tool_events=[tool_calls[tid] for tid in tool_call_order],
     )

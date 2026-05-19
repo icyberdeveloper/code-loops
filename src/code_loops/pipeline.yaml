@@ -70,11 +70,26 @@ stages:
         prompt: agents/research/researcher-ai.md
         outputs: [research/ai.md]
 
-  # 4. Architects iterate the design — writer drafts, perspective lenses critique,
-  #    debate-arbiter judges convergence (theme-based, not bug-count)
+  # 4a. Evidence phase — architect collects ground truth from codebase via
+  #     real tool calls. Output: design/pass_N/evidence.json with verified
+  #     files, symbols, quotes. Phase 2 (design stage) uses this as the
+  #     only ground truth — constrained decoding enforces that the RFC
+  #     can only cite files/symbols present in evidence.
+  #     Closes the root cause of API hallucination (run #4 RCA): narrative
+  #     markdown surface was structurally fabricated; this stage removes
+  #     that surface by separating evidence collection from RFC composition.
+  - name: evidence
+    type: evidence_extractor
+    inputs: [task.md, prd/prd.md, research_plan/plan.md, research/]
+    outputs: [design/evidence.json]
+    prompt: agents/architects/software-architect-evidence.md
+
+  # 4b. Architects iterate the design — writer drafts (with constrained decoding
+  #     against evidence.json's enum), perspective lenses critique,
+  #     debate-arbiter judges convergence (theme-based, not bug-count)
   - name: design
     type: debate_writer
-    inputs: [task.md, research_plan/plan.md, research/]
+    inputs: [task.md, research_plan/plan.md, research/, design/evidence.json]
     outputs: [design/final.md, design/debate.md]
     max_rounds: 5
     roles:

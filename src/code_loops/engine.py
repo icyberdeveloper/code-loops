@@ -18,6 +18,7 @@ from .runner import RunnerFactory
 from .stages.action import ActionStage
 from .stages.debate_critique import DebateCritiqueStage
 from .stages.debate_writer import DebateWriterStage
+from .stages.evidence_extractor import EvidenceExtractorStage
 from .stages.final_review import FinalReviewStage
 from .stages.impl_planner import ImplPlannerStage
 from .stages.parallel import ParallelStage
@@ -33,11 +34,18 @@ console = Console()
 
 # After this many redesign loops we stop trying — fall through forward with a
 # marker rather than infinite-loop. Counter persists in manifest.json.
-MAX_REDESIGN_LOOPS = 3
+# Bumped 3→5 after run #4 exhausted at counter=4 with progress visible per pass
+# (each pass produced a different recurring theme — meaning previous concerns
+# were addressed, just new ones surfaced). Wider headroom for genuine
+# multi-class convergence; if 5 isn't enough either, that signals deeper
+# architect-discipline problem requiring agent-prompt fix, not budget bump.
+MAX_REDESIGN_LOOPS = 5
 
 # After this many final-review correction loops we stop trying. Each loop appends
 # corrective subtasks and re-runs subtask_iterator + final_validation + final_review.
-MAX_FINAL_LOOPS = 5
+# Bumped 5→7 in parallel with MAX_REDESIGN_LOOPS bump — same rationale: give
+# loop-driven convergence room before declaring exhaustion.
+MAX_FINAL_LOOPS = 7
 
 
 def _stage_names(pipeline: dict) -> list[str]:
@@ -75,6 +83,7 @@ class Engine:
         self.factory = RunnerFactory()
         self.handlers = {
             "prompt": PromptStage(self.factory),
+            "evidence_extractor": EvidenceExtractorStage(self.factory),
             "parallel": ParallelStage(self.factory),
             "debate_writer": DebateWriterStage(self.factory),
             "debate_critique": DebateCritiqueStage(self.factory),

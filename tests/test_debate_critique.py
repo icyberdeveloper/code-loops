@@ -75,7 +75,7 @@ class ScriptedRunner:
         self.responses = list(responses)
         self.calls: list[tuple[str, str]] = []
 
-    def run(self, system_prompt: str, user_message: str) -> RunnerResult:
+    def run(self, system_prompt: str, user_message: str, **kwargs) -> RunnerResult:
         self.calls.append((system_prompt, user_message))
         if not self.responses:
             raise RuntimeError("ScriptedRunner ran out of responses")

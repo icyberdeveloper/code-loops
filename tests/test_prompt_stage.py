@@ -14,7 +14,7 @@ class FakeRunner:
         self.response_text = response_text
         self.calls: list[tuple[str, str]] = []
 
-    def run(self, system_prompt: str, user_message: str) -> RunnerResult:
+    def run(self, system_prompt: str, user_message: str, **kwargs) -> RunnerResult:
         self.calls.append((system_prompt, user_message))
         return RunnerResult(text=self.response_text, cost_usd=0.05, duration_s=2.0)
 
