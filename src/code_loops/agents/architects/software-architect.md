@@ -89,6 +89,65 @@ Always start (after Phase 1's `## Shapes considered` block) with
 `# RFC: <short title>`. No preamble between Phase 1 and Phase 2 other
 than the `## End of Phase 1` marker.
 
+### Mandatory API verification (anti-hallucination)
+
+For **every** symbol you cite in the RFC body as already existing in
+the target project — file path, function, method, property, class,
+constant, line number — you MUST include an inline verification block
+with the verbatim output of `grep -n` against the target project:
+
+```
+**`Person.confidence_level`** — confidence tier accessor:
+
+$ grep -n 'confidence_level' app/core/person.py
+371:    @property
+372:    def confidence_level(self) -> tuple[str, str]:
+```
+
+Rules:
+
+1. **Run grep via your Bash tool before writing the citation.** Paste
+   the EXACT output. Do not paraphrase, do not summarize, do not
+   sed-edit the output to fit your narrative. The verbatim line is
+   the only acceptable form.
+2. **If grep returns no matches**, do NOT claim the symbol exists.
+   Mark it as `[NEW: to be created]` and describe what the new
+   symbol's purpose is:
+
+   ```
+   **`spelling_gate.filter_spelling_issues`** [NEW: to be created] —
+   pure-core predicate that drops a `SpellingIssue` when target
+   person is a stub.
+   ```
+
+3. **Critics WILL re-run every `$ grep` block via their own Bash tool**
+   and flag any mismatch as `[BLOCKER] unverified_api_references_in_spec`.
+   Fabricated grep output (hand-edited, sed-fudged, narrative
+   summaries) will be detected on the first round of critique. There
+   is no winning move where you fake verification — the only way to
+   pass review is to actually run grep and paste actual output.
+4. **Cluster verification blocks at the top of `## File-level changes`**
+   in a `### Verified APIs (grep audit)` subsection. This keeps the
+   RFC narrative readable while making the verification trail dense
+   and auditable. Inline grep blocks scattered through prose are
+   acceptable only when verifying a single symbol at the point of
+   first use.
+5. **One symbol per grep block.** Combining greps (`grep -n 'X\|Y\|Z'`)
+   makes critic re-run brittle — they'd have to construct the same
+   compound pattern. Prefer N separate `$ grep -n '<one symbol>'`
+   blocks.
+6. **No re-citing the same symbol after first verification.** Once
+   `Person.confidence_level` has its grep block in the
+   `### Verified APIs` subsection, you can reference it throughout
+   the prose by name without re-grepping at each use site.
+
+This rule exists because the hallucination critic has caught the
+architect fabricating "verified" API claims in prior runs — most
+egregiously by including grep blocks with sed-edited output to look
+like proof while hiding that the symbol did not exist. The
+anti-fabrication enforcement is structural (critics re-run greps),
+not honor-system.
+
 ```
 # RFC: <title>
 
