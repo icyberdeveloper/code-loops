@@ -107,3 +107,31 @@ def test_build_schema_returns_independent_objects():
     enum_b = schema_b["properties"]["file_changes"]["items"]["properties"]["path"]["enum"]
     assert enum_a == ["a.py"]
     assert enum_b == ["b.py"]
+
+
+# ---- Axis 3 + Step-back reframing fields ----
+
+
+def test_axis3_options_in_shapes_considered():
+    """Axis 3 options optional но schema должна accept'ить когда есть."""
+    schema = build_rfc_schema(None)
+    axis3_props = schema["properties"]["shapes_considered"]["properties"]["axis3_options"]
+    assert axis3_props["type"] == "array"
+    letter_enum = axis3_props["items"]["properties"]["letter"]["enum"]
+    assert set(letter_enum) == {"T1", "T2", "T3", "T4", "T5"}
+
+
+def test_step_back_reframing_field_exists():
+    """Pre-Phase-1 step-back reframing — optional string field."""
+    schema = build_rfc_schema(None)
+    sb_props = schema["properties"]["step_back_reframing"]
+    assert sb_props["type"] == "string"
+    # Не required (optional когда regular run)
+    assert "step_back_reframing" not in schema["required"]
+
+
+def test_axis3_options_not_required():
+    """Optional в regular runs, но architect может emit для clarity."""
+    schema = build_rfc_schema(None)
+    shapes_required = schema["properties"]["shapes_considered"]["required"]
+    assert "axis3_options" not in shapes_required

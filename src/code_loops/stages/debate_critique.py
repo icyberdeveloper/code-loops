@@ -277,6 +277,21 @@ class DebateCritiqueStage:
         # — both are bubbled back to the design stage by engine.py.
         if verdict_status in ("redesign_needed", "needs_revision_max_rounds"):
             signal_path = ctx.task_dir / "design" / "redesign_signal.md"
+            # Cross-pass theme detector — детектит когда recurring_theme
+            # повторяется across passes (не только within одного pass debate
+            # как facilitator). При обнаружении trigger'ит meta-cognitive
+            # reformulation block. См. research/Echo Trap, MAR Confirmation
+            # Bias — patches на одном attractor дают diminishing returns,
+            # только reformulation breaks the loop.
+            prior_verdicts = _load_prior_pass_verdicts(ctx.task_dir, pass_n)
+            is_recurring, matching_passes, recurrence_count = _is_theme_recurring(
+                recurring_theme, prior_verdicts
+            )
+            meta_reformulation_block = ""
+            if is_recurring and recurring_theme:
+                meta_reformulation_block = _build_meta_reformulation_block(
+                    recurring_theme, matching_passes, recurrence_count, pass_n
+                )
             # Constraint shared by both verdict modes: force layer relocation,
             # not patching. Architect bias documented in run #3 — without this
             # constraint, the architect keeps the same shape and just patches
@@ -312,6 +327,7 @@ class DebateCritiqueStage:
                     f"See `design/previous_rfc.md` for the full prior attempt. "
                     f"Critique reasoning:\n\n> {verdict_reason}\n\n"
                     f"## Design guidance\n\n{design_guidance}\n\n"
+                    f"{meta_reformulation_block}"
                     f"{shape_shift_constraint}"
                     f"## Your task\n\n"
                     f"Produce a fundamentally different shape of solution — do NOT "
@@ -331,6 +347,7 @@ class DebateCritiqueStage:
                     f"See `design/previous_rfc.md` for the final RFC state. "
                     f"Facilitator reasoning (last round):\n\n> {verdict_reason}\n\n"
                     f"## Unresolved concerns from the final round\n\n{design_guidance}\n\n"
+                    f"{meta_reformulation_block}"
                     f"{shape_shift_constraint}"
                     f"## Your task\n\n"
                     f"The iterative-revision path was exhausted without convergence. "
@@ -340,6 +357,11 @@ class DebateCritiqueStage:
                     f"shift above is binding.\n"
                 )
             signal_path.write_text("# Redesign signal\n\n" + signal_body)
+            # Cross-pass history для architect — видит summary всех prior
+            # attempts (theme + chosen shape + outcome), не только last
+            # signal. Это даёт ему context для detection pattern recurrence
+            # на уровне "я уже 3 раза менял layer, но pattern recurs".
+            _write_redesign_history(ctx.task_dir, pass_n, prior_verdicts)
             # Snapshot the rejected RFC for the writer to reference
             (ctx.task_dir / "design" / "previous_rfc.md").write_text(current_rfc)
 
@@ -357,6 +379,259 @@ class DebateCritiqueStage:
             "recurring_theme": recurring_theme,
             "design_guidance": design_guidance,
         }
+
+
+def _extract_chosen_shape_from_pass(task_dir: Path, pass_n: int) -> str | None:
+    """Извлекает chosen shape из RFC pass'а.
+
+    Приоритет: JSON (draft_v*.json или final.json) — structured, надёжно.
+    Fallback: markdown final.md → regex по `Cross-axis chosen shape: X.`.
+    Если ничего не найдено — None.
+    """
+    pass_dir = task_dir / "design" / f"pass_{pass_n}"
+    if not pass_dir.exists():
+        return None
+    # Пробуем последний JSON (highest version number) — самый свежий
+    json_files = sorted(
+        pass_dir.glob("draft_v*.json"),
+        key=lambda p: (
+            int(re.search(r"draft_v(\d+)\.json", p.name).group(1))
+            if re.search(r"draft_v(\d+)\.json", p.name)
+            else 0
+        ),
+        reverse=True,
+    )
+    for jf in json_files:
+        try:
+            data = json.loads(jf.read_text())
+            chosen = data.get("shapes_considered", {}).get("chosen")
+            if chosen:
+                return chosen
+        except (json.JSONDecodeError, OSError):
+            continue
+    # Fallback на markdown final.md
+    md_path = pass_dir / "final.md"
+    if md_path.exists():
+        try:
+            text = md_path.read_text()
+            m = re.search(r"Cross-axis chosen shape:\s*([^\n.]+)", text)
+            if m:
+                return m.group(1).strip()
+        except OSError:
+            pass
+    return None
+
+
+def _write_redesign_history(
+    task_dir: Path, current_pass_n: int, prior_verdicts: list[dict]
+) -> None:
+    """Создаёт design/redesign_history.md — summary всех prior passes.
+
+    Architect видит full history (theme + chosen shape + outcome для
+    каждого pass'а), не only last redesign_signal. Это даёт ему context
+    для cross-pass pattern detection — "я уже 3 раза менял layer, pattern
+    recurs".
+
+    Согласно Meta-Policy Reflexion (arxiv 2509.03990): "structured memory
+    переживающая episode'ы — решает limitation Reflexion где reflections
+    производят ephemeral task-specific traces не reused across tasks".
+    Здесь tasks → passes within одного task.
+
+    pass_1 first redesign signal — prior_verdicts пуст, файл не пишется.
+    """
+    if not prior_verdicts:
+        return
+    history_path = task_dir / "design" / "redesign_history.md"
+    lines: list[str] = [
+        "# Prior redesign attempts (cross-pass history)",
+        "",
+        "Read BEFORE Phase 1. This is the cumulative history of all prior",
+        "redesign attempts for this RFC. If same theme recurred across passes,",
+        "shape-shift alone (Axis-1 letter change) was insufficient — you need",
+        "to reformulate the framing itself (see redesign_signal.md Axis-3 options).",
+        "",
+    ]
+    themes_seen: list[str] = []
+    for v in prior_verdicts:
+        pn = v["pass_n"]
+        theme = v.get("recurring_theme")
+        status = v.get("verdict_status", "unknown")
+        chosen = _extract_chosen_shape_from_pass(task_dir, pn)
+        lines.append(f"## Pass {pn}")
+        lines.append(f"- **Chosen shape**: `{chosen or '?'}`")
+        lines.append(f"- **Verdict**: `{status}`")
+        if theme:
+            recurrence_marker = " (RECURRENCE)" if theme in themes_seen else ""
+            lines.append(f"- **Recurring theme**: `{theme}`{recurrence_marker}")
+            themes_seen.append(theme)
+        lines.append("")
+    # Pattern summary в конце
+    from collections import Counter
+
+    theme_counts = Counter(t for t in themes_seen if t)
+    most_common = theme_counts.most_common(1)
+    if most_common and most_common[0][1] >= 2:
+        theme_name, theme_count = most_common[0]
+        lines.append("## Pattern detected")
+        lines.append("")
+        lines.append(
+            f"Theme `{theme_name}` recurred {theme_count} times across "
+            f"{len(prior_verdicts)} prior passes. Despite Axis-1 layer shifts "
+            "(mandated by shape-shift constraint), the same concern class "
+            "kept re-emerging. **Signal**: the issue is in framing, not in "
+            "layer choice. Reformulate per Axis-3 options in redesign_signal.md "
+            "instead of trying yet another Axis-1 layer."
+        )
+        lines.append("")
+    history_path.write_text("\n".join(lines))
+
+
+def _load_prior_pass_verdicts(task_dir: Path, current_pass_n: int) -> list[dict]:
+    """Загружает verdict.md из всех prior passes design_review.
+
+    Возвращает список {pass_n, recurring_theme, verdict_status} для каждого
+    пройденного pass'а до current_pass_n. Используется cross-pass theme
+    detector чтобы детектить когда recurring_theme повторяется между
+    разными passes (не только within одного pass debate как делает
+    facilitator).
+
+    Когда verdict отсутствует или невозможно распарсить — pass молча
+    пропускается (graceful — legacy tasks могут не иметь structured
+    verdicts).
+    """
+    if current_pass_n <= 1:
+        return []
+    out: list[dict] = []
+    for pn in range(1, current_pass_n):
+        verdict_path = task_dir / "design_review" / f"pass_{pn}" / "verdict.md"
+        if not verdict_path.exists():
+            continue
+        try:
+            text = verdict_path.read_text()
+        except OSError:
+            continue
+        # Парсим Recurring theme строку — format: "**Recurring theme:** `X`"
+        theme = None
+        m = re.search(r"\*\*Recurring theme:\*\*\s*`([^`]+)`", text)
+        if m:
+            theme = m.group(1).strip()
+        verdict_status = None
+        m2 = re.search(r"^#\s*Verdict:\s*(\S+)", text, re.MULTILINE)
+        if m2:
+            verdict_status = m2.group(1).strip()
+        out.append({"pass_n": pn, "recurring_theme": theme, "verdict_status": verdict_status})
+    return out
+
+
+def _normalize_theme_tokens(theme: str | None) -> set[str]:
+    """Разбивает тему на токены для fuzzy match.
+
+    Пример: `canonical_typo_partition_completeness` → {canonical, typo, partition, completeness}.
+    Используется для детектирования что `partition_completeness` и
+    `canonical_typo_partition_completeness` — это варианты одной и той же
+    темы (architect фабрикует чуть разные имена для одного и того же class).
+    """
+    if not theme:
+        return set()
+    # split по _ и пробелам, убрать общие "filler" слова
+    raw = re.split(r"[_\s]+", theme.lower())
+    return {t for t in raw if t and len(t) >= 4}
+
+
+def _is_theme_recurring(
+    current_theme: str | None, prior_verdicts: list[dict]
+) -> tuple[bool, list[int], int]:
+    """Детектит повторение темы across passes.
+
+    Возвращает (is_recurring, list_of_prior_pass_ns, recurrence_count).
+
+    Recurring если:
+      a) точное совпадение имени с любой из 2 последних предыдущих тем, ИЛИ
+      b) fuzzy match через token overlap ≥ 2 общих токенов длины ≥ 4.
+
+    Fuzzy match нужен потому что architect-debate-arbiter может слегка
+    варьировать имя темы между passes — `partition_completeness` vs
+    `canonical_typo_partition_completeness` — это вариации одной проблемы,
+    но точный string match их пропустит.
+    """
+    if not current_theme or not prior_verdicts:
+        return False, [], 0
+    current_tokens = _normalize_theme_tokens(current_theme)
+    matching_passes: list[int] = []
+    for v in prior_verdicts:
+        prior_theme = v.get("recurring_theme")
+        if not prior_theme:
+            continue
+        # exact match
+        if prior_theme == current_theme:
+            matching_passes.append(v["pass_n"])
+            continue
+        # fuzzy: token overlap ≥ 2 значимых tokens
+        prior_tokens = _normalize_theme_tokens(prior_theme)
+        if len(current_tokens & prior_tokens) >= 2:
+            matching_passes.append(v["pass_n"])
+    recurrence_count = len(matching_passes) + 1  # +1 для текущего pass
+    return len(matching_passes) > 0, matching_passes, recurrence_count
+
+
+def _build_meta_reformulation_block(
+    recurring_theme: str, matching_passes: list[int], recurrence_count: int, current_pass_n: int
+) -> str:
+    """Структурный escalation message когда theme recurring across passes.
+
+    Согласно research (RAGEN Echo Trap, MAR Confirmation Bias, MPR
+    cross-episode memory): когда тот же class concern recurring в 2+
+    iterations, signal должен force REFORMULATION, не очередной patch.
+
+    Soft instructions ("think critically", "try different approach") по
+    research имеют 48% disagreement rate vs 99.2% для explicit "you MUST
+    oppose framing" (OpenReview mxBmj5LYU2). Поэтому формулировка hard:
+    "MUST step back, MUST enumerate alternative framings, MUST justify
+    why new framing makes concern class structurally impossible".
+    """
+    passes_str = ", ".join(f"pass_{p}" for p in matching_passes)
+    return (
+        "## CRITICAL: meta-cognitive reformulation required\n\n"
+        f"Theme `{recurring_theme}` (or its variants) RECURRED across passes "
+        f"{passes_str} and now again in pass_{current_pass_n} — "
+        f"total recurrence count: {recurrence_count}.\n\n"
+        "This is **NOT** a signal to patch yet another variant. This is a "
+        "signal that your **framing of the problem is wrong**. Each prior "
+        "pass shifted to a different Axis-1 layer (per shape-shift "
+        "constraint), but the same concern class kept re-emerging because "
+        "the underlying framing was preserved across layer shifts.\n\n"
+        "**MANDATORY next steps** (binding — critics will check):\n\n"
+        "1. **STEP BACK** before drafting Phase 1. Write a "
+        "`## Step-back reframing` section in your RFC answering:\n"
+        f"   - What assumption in prior framing produces the `{recurring_theme}` "
+        "concern class?\n"
+        "   - 5 whys: WHY does this CLASS keep recurring (not why this "
+        "specific instance)?\n"
+        "   - Enumerate 3 ALTERNATIVE framings; for each, would the "
+        "recurring concern class still emerge?\n\n"
+        "2. **CHOOSE Axis-3 framing** in your Phase 1 `## Shapes considered` "
+        "block (in addition to Axis-1 / Axis-2). Axis-3 options:\n"
+        "   - **T1**. Binary partition (canonical vs typo) — DEFAULT, "
+        "leaves edge cases. **FORBIDDEN** when meta_reformulation required.\n"
+        "   - **T2**. N-way with explicit unknown tier + fail-closed — "
+        "open-world classification with reject option (classical CS pattern, "
+        "see Open World Assumption literature).\n"
+        "   - **T3**. Continuous score (no hard threshold) — confidence-"
+        "weighted decisions.\n"
+        "   - **T4**. Inverted problem — instead of detecting wrongness, "
+        "project onto known canonical set (closed-form vs open-form).\n"
+        "   - **T5**. Reformulate problem space — current framing wrong "
+        "at problem-statement level, not solution-shape level.\n\n"
+        "3. **JUSTIFY structural impossibility** — explain in 2-3 sentences "
+        f"why your chosen Axis-3 framing makes the `{recurring_theme}` "
+        "concern class STRUCTURALLY IMPOSSIBLE (not patched in a new "
+        "location). If you cannot articulate structural impossibility, your "
+        "reformulation is insufficient.\n\n"
+        "Research backing: RAGEN Echo Trap, MAR Confirmation Bias, "
+        "InvThink behavioral attractors. Patches on the same attractor "
+        "produce diminishing returns — only reformulation breaks the loop.\n\n"
+        "**Meta-reformulation flag**: meta_reformulation_required = true\n\n"
+    )
 
 
 def _read_redesign_signal(task_dir: Path) -> str | None:

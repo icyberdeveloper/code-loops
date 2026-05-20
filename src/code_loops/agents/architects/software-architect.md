@@ -54,7 +54,27 @@ trade-off + one line of rejection or selection rationale.
 - H. Schema / contract change (type-level prevention): <trade-off>
 - I. Library/dependency adoption (existing primitive solves it): <trade-off>
 
-Cross-axis chosen shape: <Axis 1 letter> × <Axis 2 letter>.
+**Axis 3: WHAT IS THE FUNDAMENTAL FRAMING**
+- T1. Binary partition (canonical vs typo / valid vs invalid): DEFAULT
+  for simple cases, but **leaves edge cases at the partition boundary
+  by construction**. If your problem has uncertain inputs near the
+  boundary, prefer T2/T3.
+- T2. N-way classification with explicit **unknown** tier + **fail-closed**
+  behavior on unknown: classical open-world classification with reject
+  option. Used when the input space contains values that don't cleanly
+  belong to known classes — unknowns become explicit, no false
+  positive, no false negative ambiguity.
+- T3. Continuous score with thresholds and abstain zone: no hard binary
+  boundary, decisions confidence-weighted. Edge cases near boundary
+  fall in abstain zone by design, not by patch.
+- T4. Inverted problem: instead of "detect wrongness" (open-form,
+  requires enumerating channels), "project toward correctness" (closed-
+  form, single lookup). Successful reformulation pattern in production.
+- T5. Reformulate problem space: current problem statement is wrong at
+  the requirements level. Question whether the problem should be solved
+  at this layer at all.
+
+Cross-axis chosen shape: <Axis 1 letter> × <Axis 2 letter> [× <Axis 3 letter>].
 **Rationale** (3-5 sentences): why this combination, what it sacrifices,
 what it gains. Include explicit acknowledgement of which Axis-1 candidate
 you considered AND REJECTED (not just "didn't pick") — and why
@@ -73,6 +93,27 @@ your chosen Axis-1 letter MUST differ from the prior pass's letter.
 If pass_1 used Axis 1 = A, you cannot use A again. The redesign signal
 exists because the prior shape was structurally rejected by critics;
 producing another shape on the same axis re-triggers the same rejection.
+
+**Meta-reformulation mode constraint** (when redesign_signal contains
+`meta_reformulation_required = true`): this means the SAME concern class
+recurred across 2+ prior passes despite layer shifts. Layer shifting
+alone is insufficient — the FRAMING is wrong.
+
+In this mode:
+1. Write a `## Step-back reframing` section BEFORE Phase 1 answering:
+   - What assumption in prior framing produces the recurring concern class?
+   - 5 whys: WHY does this CLASS keep recurring (not why this specific instance)?
+   - Enumerate 3 alternative framings; for each, would the recurring
+     class still emerge?
+2. Your chosen Axis-3 MUST be T2, T3, T4, or T5 — **T1 is FORBIDDEN**
+   in meta_reformulation_required mode (it's the default framing that
+   produced the recurrence in the first place).
+3. Justify in 2-3 sentences why your chosen Axis-3 framing makes the
+   recurring concern class STRUCTURALLY IMPOSSIBLE (not patched in
+   a new location).
+
+If you cannot articulate structural impossibility, your reformulation
+is insufficient — circle back and pick a different Axis-3 option.
 
 ## End of Phase 1 — proceed to Phase 2
 ```

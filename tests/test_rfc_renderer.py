@@ -160,3 +160,46 @@ def test_render_handles_minimal_inputs_gracefully():
     md = render_rfc(rfc)
     assert "# RFC: untitled" in md
     assert "## Shapes considered" in md
+
+
+# ---- Axis 3 + Step-back reframing rendering ----
+
+
+def test_render_axis3_options_when_present():
+    rfc = _minimal_rfc()
+    rfc["shapes_considered"]["axis3_options"] = [
+        {"letter": "T1", "description": "binary partition", "verdict": "FORBIDDEN"},
+        {"letter": "T2", "description": "N-way + unknown", "verdict": "SELECTED"},
+    ]
+    md = render_rfc(rfc)
+    assert "**Axis 3: WHAT IS THE FUNDAMENTAL FRAMING**" in md
+    assert "**T1.** binary partition" in md
+    assert "**T2.** N-way + unknown" in md
+
+
+def test_render_skips_axis3_when_empty():
+    """Regular run — Axis 3 не присутствует. Header не должен появляться."""
+    rfc = _minimal_rfc()
+    md = render_rfc(rfc)
+    assert "Axis 3" not in md
+
+
+def test_render_step_back_reframing_when_present():
+    rfc = _minimal_rfc()
+    rfc["step_back_reframing"] = (
+        "Prior framing assumed binary partition. 5 whys: why does CLASS recur..."
+    )
+    md = render_rfc(rfc)
+    assert "## Step-back reframing" in md
+    assert "Prior framing assumed binary partition" in md
+    # Step-back appears BEFORE Phase 1
+    sb_idx = md.find("## Step-back reframing")
+    p1_idx = md.find("## Shapes considered")
+    assert sb_idx < p1_idx, "Step-back must appear before Phase 1"
+
+
+def test_render_skips_step_back_when_empty():
+    """Regular run без reformulation — section не должна появляться."""
+    rfc = _minimal_rfc()
+    md = render_rfc(rfc)
+    assert "## Step-back reframing" not in md

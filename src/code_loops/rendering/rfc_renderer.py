@@ -18,6 +18,16 @@ def render_rfc(rfc: dict[str, Any]) -> str:
     """Конвертирует RFC JSON в markdown."""
     parts: list[str] = []
 
+    # Pre-Phase-1: Step-back reframing (только в meta_reformulation mode)
+    step_back = (rfc.get("step_back_reframing") or "").strip()
+    if step_back:
+        parts.append("## Step-back reframing")
+        parts.append("")
+        parts.append(step_back)
+        parts.append("")
+        parts.append("---")
+        parts.append("")
+
     # Phase 1: Shapes considered (всегда есть)
     parts.append(_render_shapes(rfc.get("shapes_considered", {})))
     parts.append("")
@@ -173,6 +183,17 @@ def _render_shapes(shapes: dict[str, Any]) -> str:
         parts.append("**Axis 2: WHAT KIND of intervention**")
         parts.append("")
         for opt in axis2:
+            letter = opt.get("letter", "?")
+            desc = opt.get("description", "").strip()
+            verdict = opt.get("verdict", "").strip()
+            parts.append(f"- **{letter}.** {desc} — {verdict}")
+        parts.append("")
+
+    axis3 = shapes.get("axis3_options", []) or []
+    if axis3:
+        parts.append("**Axis 3: WHAT IS THE FUNDAMENTAL FRAMING**")
+        parts.append("")
+        for opt in axis3:
             letter = opt.get("letter", "?")
             desc = opt.get("description", "").strip()
             verdict = opt.get("verdict", "").strip()

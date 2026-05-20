@@ -41,6 +41,19 @@ _BASE_RFC_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": "Короткий заголовок RFC (1 строка).",
         },
+        "step_back_reframing": {
+            "type": "string",
+            "description": (
+                "Pre-Phase-1 reasoning when redesign_signal contains "
+                "meta_reformulation_required = true (cross-pass theme "
+                "recurrence detected). MANDATORY в reformulation mode, "
+                "пусто в обычном режиме. Должна содержать: (1) assumption "
+                "в prior framing producing recurring class, (2) 5 whys "
+                "почему этот CLASS keeps recurring (не specific instance), "
+                "(3) 3 alternative framings + анализ would the class "
+                "still emerge under each."
+            ),
+        },
         "shapes_considered": {
             "type": "object",
             "description": (
@@ -85,9 +98,35 @@ _BASE_RFC_SCHEMA: dict[str, Any] = {
                         },
                     },
                 },
+                "axis3_options": {
+                    "type": "array",
+                    "description": (
+                        "Опции Оси 3 (WHAT IS THE FUNDAMENTAL FRAMING). "
+                        "Optional в обычном режиме, MANDATORY когда signal "
+                        "содержит meta_reformulation_required = true. T1 "
+                        "FORBIDDEN в reformulation mode (это default framing "
+                        "который привёл к recurrence). T1..T5 — см. "
+                        "software-architect.md Phase 1."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "required": ["letter", "description", "verdict"],
+                        "properties": {
+                            "letter": {
+                                "type": "string",
+                                "enum": ["T1", "T2", "T3", "T4", "T5"],
+                            },
+                            "description": {"type": "string"},
+                            "verdict": {"type": "string"},
+                        },
+                    },
+                },
                 "chosen": {
                     "type": "string",
-                    "description": "Выбранная комбинация, например 'C × F'.",
+                    "description": (
+                        "Выбранная комбинация. Регулярный режим: 'C × F'. "
+                        "Reformulation mode: 'C × F × T2' (с Axis-3 letter)."
+                    ),
                 },
                 "rationale": {
                     "type": "string",

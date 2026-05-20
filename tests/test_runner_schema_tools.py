@@ -85,11 +85,119 @@ def test_run_with_allowed_tools_adds_flag_with_comma_separated_list(monkeypatch)
 # ---- expect_json parsing ----
 
 
-def test_parse_with_expect_json_populates_parsed_json():
-    stdout = _ok_stdout_with_text('{"verified_files": ["a.py", "b.py"]}')
+def test_parse_expect_json_takes_structured_output_from_result():
+    """Реальное поведение CLI: --json-schema даёт structured_output поле
+    в result event. parsed_json должен взять оттуда, не парсить text."""
+    payload = {"verified_files": ["a.py", "b.py"]}
+    events = [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_x",
+                        "name": "StructuredOutput",
+                        "input": payload,
+                    }
+                ]
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_x",
+                        "content": "Structured output provided successfully",
+                    }
+                ]
+            },
+        },
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "Evidence document submitted."}]},
+        },
+        {
+            "type": "result",
+            "result": "Evidence document submitted.",
+            "structured_output": payload,
+            "usage": {},
+            "total_cost_usd": 0.05,
+        },
+    ]
+    stdout = "\n".join(json.dumps(e) for e in events)
     result = _parse_stream_json(stdout, duration=1.0, expect_json=True)
-    assert result.parsed_json == {"verified_files": ["a.py", "b.py"]}
-    assert result.text == '{"verified_files": ["a.py", "b.py"]}'
+    assert result.parsed_json == payload
+    # text — это assistant prose response, не JSON
+    assert result.text == "Evidence document submitted."
+
+
+def test_parse_expect_json_fallback_to_structured_output_tool_use():
+    """Если result.structured_output отсутствует но StructuredOutput tool
+    был вызван — берём из tool_use.input как fallback."""
+    payload = {"x": 1}
+    events = [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "StructuredOutput",
+                        "input": payload,
+                    }
+                ]
+            },
+        },
+        {
+            "type": "result",
+            "result": "done",
+            "usage": {},
+            "total_cost_usd": 0.01,
+        },
+    ]
+    stdout = "\n".join(json.dumps(e) for e in events)
+    result = _parse_stream_json(stdout, duration=1.0, expect_json=True)
+    assert result.parsed_json == payload
+
+
+def test_structured_output_tool_use_not_in_tool_events():
+    """StructuredOutput это путь --json-schema, не обычный tool. Не должен
+    появляться в tool_events (там только real Bash/Read/Grep calls для
+    аудита critic'ом)."""
+    events = [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}},
+                    {"type": "tool_use", "id": "t2", "name": "StructuredOutput", "input": {"x": 1}},
+                ]
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "file.py"}]
+            },
+        },
+        {
+            "type": "result",
+            "result": "done",
+            "structured_output": {"x": 1},
+            "usage": {},
+            "total_cost_usd": 0.01,
+        },
+    ]
+    stdout = "\n".join(json.dumps(e) for e in events)
+    result = _parse_stream_json(stdout, duration=1.0, expect_json=True)
+    # Только Bash в tool_events, StructuredOutput — отдельно через parsed_json
+    assert len(result.tool_events) == 1
+    assert result.tool_events[0]["name"] == "Bash"
+    assert result.parsed_json == {"x": 1}
 
 
 def test_parse_without_expect_json_leaves_parsed_json_none():
@@ -99,13 +207,13 @@ def test_parse_without_expect_json_leaves_parsed_json_none():
     assert result.text == '{"x": 1}'
 
 
-def test_parse_expect_json_with_malformed_output_returns_none_not_raise():
-    """Constrained decoding должен гарантировать валидный JSON; если всё-таки
-    пришло malformed — parsed_json остаётся None, caller сам решит."""
-    stdout = _ok_stdout_with_text("not valid json {")
+def test_parse_expect_json_no_structured_output_returns_none():
+    """Когда --json-schema задан но CLI почему-то не вернул StructuredOutput
+    (refusal, CLI bug) — parsed_json остаётся None, caller увидит и решит."""
+    stdout = _ok_stdout_with_text("just plain text no schema")
     result = _parse_stream_json(stdout, duration=1.0, expect_json=True)
     assert result.parsed_json is None
-    assert result.text == "not valid json {"
+    assert result.text == "just plain text no schema"
 
 
 # ---- tool_events parsing ----

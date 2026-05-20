@@ -87,7 +87,13 @@ class ClaudeRunner:
         self,
         model: str = "claude-opus-4-7",
         effort: str = "max",
-        timeout_s: int = 1200,
+        # Раньше 1200s, поднято до 2400s после run #5 retry:
+        # constrained decoding (--json-schema) добавляет grammar compilation
+        # overhead ~5s per cold call + увеличивает latency финального
+        # token sampling. Pass_2 design ~17 мин average per writer call,
+        # один pass_3 call не уложился в 1200s. 2400s даёт headroom для
+        # больших RFC drafts при sustained constrained decoding.
+        timeout_s: int = 2400,
     ):
         self.model = model
         self.effort = effort
@@ -193,15 +199,22 @@ def _parse_stream_json(stdout: str, duration: float, *, expect_json: bool = Fals
       - tool_use блоки и сопоставляет их с tool_result по id
         → RunnerResult.tool_events используется critic'ом для аудита
 
-    expect_json: когда True (вызов был с output_schema), финальный текст
-    парсится как JSON в RunnerResult.parsed_json. Если парсинг не удался —
-    parsed_json остаётся None, text всё ещё содержит сырой output.
+    expect_json: когда True (вызов был с output_schema), Claude CLI
+    реализует --json-schema через специальный StructuredOutput tool.
+    Реальный JSON output приходит в:
+      1. event.result.structured_output (предпочтительно — final source)
+      2. assistant.content[type=tool_use].name == "StructuredOutput" .input
+         (backup — если result.structured_output отсутствует)
+    Финальный result.result это **текстовый** ответ ассистента ПОСЛЕ
+    StructuredOutput tool call, не сам JSON. Не парсить его как JSON.
     """
     text_chunks: list[str] = []
     cost: float | None = None
     in_tok: int | None = None
     out_tok: int | None = None
     final_result: str | None = None
+    structured_output_from_result: dict | None = None
+    structured_output_from_tool: dict | None = None
     # Сопоставление tool_use_id → запись о tool call (для парного tool_result).
     tool_calls: dict[str, dict] = {}
     # Порядок вызовов — важен для аудита: critic видит хронологию.
@@ -224,10 +237,19 @@ def _parse_stream_json(stdout: str, duration: float, *, expect_json: bool = Fals
                     text_chunks.append(block.get("text", ""))
                 elif btype == "tool_use":
                     tu_id = block.get("id")
+                    name = block.get("name", "")
+                    block_input = block.get("input", {})
+                    # StructuredOutput tool — это путь --json-schema в CLI.
+                    # Его input и есть наш JSON output. Не считаем его как
+                    # обычный tool_event (это не grep/bash который критик
+                    # должен аудировать — это сама финальная структура).
+                    if name == "StructuredOutput" and isinstance(block_input, dict):
+                        structured_output_from_tool = block_input
+                        continue
                     if tu_id:
                         tool_calls[tu_id] = {
-                            "name": block.get("name", ""),
-                            "input": block.get("input", {}),
+                            "name": name,
+                            "input": block_input,
                             "output": None,
                         }
                         tool_call_order.append(tu_id)
@@ -252,17 +274,23 @@ def _parse_stream_json(stdout: str, duration: float, *, expect_json: bool = Fals
             out_tok = usage.get("output_tokens")
             if isinstance(event.get("result"), str):
                 final_result = event["result"]
+            # structured_output — авторитетный источник JSON output (см.
+            # docstring). Заполняется CLI'ем когда --json-schema задан.
+            so = event.get("structured_output")
+            if isinstance(so, dict):
+                structured_output_from_result = so
 
     text = final_result if final_result is not None else "".join(text_chunks)
     parsed_json: dict | None = None
-    if expect_json and text:
-        try:
-            parsed_json = json.loads(text)
-        except json.JSONDecodeError:
-            # Constrained decoding должен гарантировать валидный JSON.
-            # Если не получилось — оставляем None, caller увидит и решит
-            # что делать (retry, fallback, error).
-            parsed_json = None
+    if expect_json:
+        # Приоритет: structured_output из result (definitive). Fallback:
+        # StructuredOutput tool_use.input (если result поле почему-то
+        # отсутствует — теоретически возможно при streaming артефактах).
+        # НЕ парсим text — он содержит обычный ответ ассистента, не JSON.
+        if structured_output_from_result is not None:
+            parsed_json = structured_output_from_result
+        elif structured_output_from_tool is not None:
+            parsed_json = structured_output_from_tool
 
     return RunnerResult(
         text=text,

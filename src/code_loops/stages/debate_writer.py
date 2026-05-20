@@ -32,7 +32,11 @@ from pathlib import Path
 
 from rich.console import Console
 
-from ..isolation import parse_perspectives
+from ..isolation import (
+    DEVILS_ADVOCATE_PERSPECTIVE,
+    add_devils_advocate_if_signaled,
+    parse_perspectives,
+)
 from ..parallelism import gather_chunked
 from ..rendering.rfc_renderer import render_rfc
 from ..rfc_schema import build_rfc_schema
@@ -79,6 +83,13 @@ class DebateWriterStage:
 
         plan_md = (ctx.task_dir / "research_plan" / "plan.md").read_text()
         perspectives = parse_perspectives(plan_md)
+        # Auto-add devils_advocate когда meta_reformulation_required triggered
+        # cross-pass detector'ом в debate_critique. Research: hard mandate
+        # "you MUST oppose framing" → 99.2% disagreement vs 48% baseline для
+        # soft instructions. Этот perspective challenges FRAMING (binary vs
+        # N-way etc), не implementation details — закрывает gap который
+        # обычные critics не покрывают (они per-instance defects).
+        perspectives = add_devils_advocate_if_signaled(perspectives, ctx.task_dir)
         task_md = (ctx.task_dir / "task.md").read_text()
         research_dir = ctx.task_dir / "research"
         research_blocks = "\n\n".join(
@@ -130,6 +141,16 @@ class DebateWriterStage:
         perspective_template = load_agent_prompt(
             ctx.repo_root / roles["perspective"]["prompt"], ctx
         )
+        # Devil's Advocate имеет свой отдельный hard-mandate prompt. Загружаем
+        # его lazy — только если devils_advocate в active perspectives list
+        # (т.е. meta_reformulation_required triggered cross-pass detector'ом).
+        devils_advocate_template: str | None = None
+        if DEVILS_ADVOCATE_PERSPECTIVE in perspectives:
+            devils_advocate_path = (
+                ctx.repo_root / "agents" / "architects" / "architect-perspective-devils-advocate.md"
+            )
+            if devils_advocate_path.exists():
+                devils_advocate_template = load_agent_prompt(devils_advocate_path, ctx)
         facilitator_sys = load_agent_prompt(ctx.repo_root / roles["facilitator"]["prompt"], ctx)
 
         cost_total = 0.0
@@ -156,8 +177,21 @@ class DebateWriterStage:
                 if previous_rfc_path.exists()
                 else ""
             )
+            # Cross-pass history block — architect видит summary всех prior
+            # passes (theme + chosen shape + outcome), не only last signal.
+            # Без этого блока каждый redesign выглядит как independent attempt,
+            # architect не видит pattern "уже 3 раза менял layer pa recurring
+            # theme". См. _write_redesign_history в debate_critique.py.
+            history_path = ctx.task_dir / "design" / "redesign_history.md"
+            history_block = (
+                f"=== redesign_history.md (cross-pass pattern context) ===\n"
+                f"{history_path.read_text()}\n\n"
+                if history_path.exists()
+                else ""
+            )
             initial_msg = (
                 f"{evidence_block}"
+                f"{history_block}"
                 f"{redesign_block}"
                 f"{previous_block}"
                 f"=== research_plan/plan.md ===\n{plan_md}\n\n"
@@ -166,7 +200,10 @@ class DebateWriterStage:
                 "structural reasons described in redesign_signal.md. Do NOT patch the "
                 "previous approach — propose a fundamentally different shape that "
                 "makes the recurring failure modes structurally impossible. Cite the "
-                "redesign_signal explicitly in your Context section."
+                "redesign_signal explicitly in your Context section. "
+                "If redesign_history.md shows the same theme recurring across passes, "
+                "Axis-1 layer shift alone is insufficient — reformulate framing per "
+                "Axis-3 options in redesign_signal."
             )
         else:
             console.print(
@@ -217,6 +254,7 @@ class DebateWriterStage:
                     task_md=task_md,
                     round_n=round_n,
                     max_rounds=max_rounds,
+                    devils_advocate_template=devils_advocate_template,
                 )
             )
             for spec, pr in zip(perspectives, persp_results, strict=True):
@@ -337,17 +375,36 @@ async def _run_perspectives(
     task_md: str,
     round_n: int,
     max_rounds: int,
+    devils_advocate_template: str | None = None,
 ) -> list[RunnerResult]:
+    """Запускает perspectives в parallel chunks.
+
+    devils_advocate_template — отдельный promt для devils_advocate
+    perspective (она имеет hard mandate "you MUST oppose framing" в
+    отдельном файле, не generic placeholder). Когда spec ==
+    DEVILS_ADVOCATE_PERSPECTIVE — используется этот template вместо
+    generic perspective_template. None означает devils_advocate не
+    activated в этом run (regular debate без meta_reformulation).
+    """
     task_brief = "\n".join(task_md.splitlines()[:6])
     budget = _new_concerns_budget(round_n, max_rounds)
     tasks = []
     for spec in perspectives:
-        sys_prompt = (
-            perspective_template.replace("{perspective_name}", spec)
-            .replace("{round_n}", str(round_n))
-            .replace("{max_rounds}", str(max_rounds))
-            .replace("{new_concerns_budget}", str(budget))
-        )
+        if spec == DEVILS_ADVOCATE_PERSPECTIVE and devils_advocate_template is not None:
+            # Devil's Advocate имеет свой отдельный template с hard
+            # mandate. Не использует generic placeholder подход.
+            sys_prompt = (
+                devils_advocate_template.replace("{round_n}", str(round_n))
+                .replace("{max_rounds}", str(max_rounds))
+                .replace("{new_concerns_budget}", str(budget))
+            )
+        else:
+            sys_prompt = (
+                perspective_template.replace("{perspective_name}", spec)
+                .replace("{round_n}", str(round_n))
+                .replace("{max_rounds}", str(max_rounds))
+                .replace("{new_concerns_budget}", str(budget))
+            )
         user_msg = (
             f"=== task brief ===\n{task_brief}\n\n"
             f"=== current draft ===\n{current_draft}\n\n"
