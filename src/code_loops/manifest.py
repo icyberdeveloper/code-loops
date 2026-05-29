@@ -141,8 +141,22 @@ class Manifest:
         theme: str | None = None,
         max_rounds_reached: bool | None = None,
         final_artifact: str | None = None,
+        plateau_metrics: dict | None = None,
+        followups_count: int | None = None,
     ) -> None:
-        """Append a pass entry to stage.passes. Updates stage cost rollup."""
+        """Append a pass entry to stage.passes. Updates stage cost rollup.
+
+        plateau_metrics: optional per-round trajectory of concern-fingerprint
+        stats для tuning PLATEAU_DELTA_BLOCKERS_MAX / PLATEAU_NEW_FP_RATIO_MIN
+        thresholds на real runs. Shape: {"rounds": [{round_n, blockers,
+        fp_count, new_fp_ratio, delta_blockers, is_plateau}, ...]}.
+        Accumulates forensic data чтобы оценить если subjective thresholds
+        правильные (currently 0 + 0.5) — без этого threshold tuning blind.
+
+        followups_count: количество tracked followups когда verdict =
+        approved_with_followups. Помогает оценить distribution на real runs
+        (если ≥10 → cap kicked in, может indicate need для split RFC).
+        """
         st = self.stage_entry(stage)
         passes = st.setdefault("passes", [])
         entry: dict[str, Any] = {
@@ -163,6 +177,10 @@ class Manifest:
             entry["theme"] = theme
         if final_artifact is not None:
             entry["final"] = final_artifact
+        if plateau_metrics is not None:
+            entry["plateau_metrics"] = plateau_metrics
+        if followups_count is not None:
+            entry["followups_count"] = followups_count
         passes.append(entry)
         st["passes_count"] = len(passes)
         self._save()

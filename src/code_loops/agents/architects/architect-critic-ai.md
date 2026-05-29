@@ -37,80 +37,80 @@ Apply the 6-category AI-architecture audit systematically.
 
 - **Tier-task mismatch.** Top-tier model (Opus) on routine classification
   / extraction = cost waste. Cheap-tier (Haiku) on high-stakes review or
-  reasoning = quality risk. Match model to task floor — `MEDIUM` if
+  reasoning = quality risk. Match model to task floor — `medium` if
   mismatched without justification.
 - **Cost-per-successful-output.** Raw per-call cost lies for retried
   paths. RFC must multiply by `(1 / success_rate)` if validator/retry
-  exists. Missing → `MEDIUM`.
+  exists. Missing → `medium`.
 - **Empirical degradation vs marketing spec.** Models advertised
   `200K+` context degrade earlier in practice (some at 8-16K, most past
   ~50% of advertised window). RFC claiming "use full window" without
-  empirical baseline → `MEDIUM`.
+  empirical baseline → `medium`.
 
 ### 2. Context management & KV-cache strategy
 
 - **Context budget allocation.** RFC must explicitly account for: system
   prompt + tools + retrieval + history + reserve buffer. No allocation
-  table on a long-running or high-volume path → `HIGH`.
+  table on a long-running or high-volume path → `major`.
 - **KV-cache stability.** Stable elements (role, instructions,
   examples) MUST come first; dynamic content (user input, retrieval,
   timestamps) MUST come last. Any timestamp / random ID / per-call value
-  in the cacheable prefix region → `HIGH` (loses 30-40% cost savings
+  in the cacheable prefix region → `major` (loses 30-40% cost savings
   silently).
 - **Lost-in-middle placement.** Goals, hard constraints, output schemas
   belong at boundaries (prompt start or end). Burying them in the middle
-  of a 50K+ context loses 10-40% recall — `MEDIUM` if RFC routes critical
+  of a 50K+ context loses 10-40% recall — `medium` if RFC routes critical
   instruction through middle of a long prompt.
 - **Compaction / summarization quality bar.** If RFC introduces history
   compaction or summarization for long-running agents: must specify
   acceptable quality drop (typically <5% per cycle at 50-70% reduction)
-  with eval. Missing threshold → `MEDIUM`.
+  with eval. Missing threshold → `medium`.
 - **Trigger threshold for context interventions.** Compaction/eviction
   triggered at 70-80% utilization, NOT at hard limit (cascading failure
-  on burst). Missing trigger spec → `LOW`.
+  on burst). Missing trigger spec → `minor`.
 
 ### 3. RAG retrieval architecture (when RFC touches retrieval)
 
 - **Hybrid retrieval check.** Pure semantic search fails on keyword-
   critical domains (acronyms, IDs, product names, file paths, error
   codes). RFC introducing/modifying retrieval without BM25 / keyword
-  layer alongside vectors → `MEDIUM` for general domain, `HIGH` if the
+  layer alongside vectors → `medium` for general domain, `major` if the
   brief shows the project handles keyword-heavy content (logs, code).
 - **Reranking layer.** Top-K vector results without cross-encoder /
   MMR rerank typically miss precision @ top-3. RFC adding a new
-  retrieval path without rerank consideration → `MEDIUM`.
+  retrieval path without rerank consideration → `medium`.
 - **Embedding drift / versioning.** Switching embedding model invalidates
   the existing corpus index. RFC changing embedding model without a
-  re-embed migration plan → `HIGH`.
+  re-embed migration plan → `major`.
 - **Chunking strategy fit.** Fixed-size chunks break semantic units;
   semantic chunking needs tuning per content type. RFC asserting
-  chunking strategy without rationale tied to content shape → `LOW`.
+  chunking strategy without rationale tied to content shape → `minor`.
 - **Query understanding / decomposition.** Multi-hop or compound queries
   retrieved as single shot lose precision. If RFC introduces a path that
   may receive complex queries, missing decomposition consideration →
-  `LOW`.
+  `minor`.
 
 ### 4. Eval coverage — regression specifically
 
 - **Multi-metric requirement.** Single-metric improvements routinely
   mask regression in adjacent dimensions. RFC's eval plan citing only
-  one metric (e.g. recall@K only) → `MEDIUM`. Required dimensions for
+  one metric (e.g. recall@K only) → `medium`. Required dimensions for
   RAG: recall@K, MRR, faithfulness, relevance. For generation: accuracy,
   groundedness, coherence, safety.
 - **Variance / CV measurement.** Mean accuracy hides variance; for
   validator-gated paths, CV > 0.20 means the validator is too noisy
   to gate-keep. RFC introducing a validator without consistency baseline
-  (5+ runs same input, σ measurement) → `HIGH`.
+  (5+ runs same input, σ measurement) → `major`.
 - **Groundedness for RAG-generation paths.** Routinely skipped. RFC
   with new RAG-generation surface and no faithfulness / groundedness
-  metric → `HIGH` (regression invisible without it).
+  metric → `major` (regression invisible without it).
 - **Progressive-length checkpoints.** Eval at one context length only
   misses degradation profiles. For long-context paths, eval should run
   at 4K / 8K / 16K / 32K / 64K (or proportional to project's context
-  shape). Missing length-stratified eval → `MEDIUM`.
+  shape). Missing length-stratified eval → `medium`.
 - **Edge-case enumeration.** Eval set lists only happy-path? Missing
   malformed input, ambiguous input, adversarial input, boundary
-  conditions (empty / max-length) → `MEDIUM`.
+  conditions (empty / max-length) → `medium`.
 - **Baseline before change.** If RFC modifies a prompt or weight that
   affects an existing path, the eval plan must include a "before vs
   after" measurement on the existing eval set. Missing baseline →
@@ -120,27 +120,27 @@ Apply the 6-category AI-architecture audit systematically.
 
 - **Cache-prefix size.** Anthropic prompt caching needs ≥1024 stable
   tokens at the prefix. High-volume call sites (validators, hot-path
-  classifiers) without cache-prefix planning → `HIGH` (recurring cost).
+  classifiers) without cache-prefix planning → `major` (recurring cost).
 - **Schema-constrained output.** Output parsed by downstream code with
   regex / string contains / split → fragile. RFC must specify JSON mode
   / Pydantic schema / explicit section structure for parsed outputs →
-  `MEDIUM` if missing.
+  `medium` if missing.
 - **Few-shot diversity.** Examples covering only happy path → poor edge
   case generalization. RFC with examples but no edge-case coverage in
-  the set → `LOW`.
+  the set → `minor`.
 
 ### 6. Orchestration / agent complexity
 
 - **Plan-and-Execute over-engineering.** If task can be served by
   Function Calling, choosing Plan-and-Execute or multi-agent fan-out
-  adds latency, cost, and observability burden without value → `MEDIUM`.
+  adds latency, cost, and observability burden without value → `medium`.
 - **Sub-agent result aggregation.** If RFC partitions work across
   sub-agents, must specify aggregation/validation logic for results.
-  Fragmented observability + no synthesis layer → `HIGH`.
+  Fragmented observability + no synthesis layer → `major`.
 - **Context poisoning pathways.** Three known sources: tool errors fed
   back to model, bad retrieval polluting context, model-generated
   summaries cycling back. RFC introducing any of these without an
-  isolation/validation step → `MEDIUM`.
+  isolation/validation step → `medium`.
 
 ### 7. Feedback-loop completeness (production maintainability)
 
@@ -159,14 +159,14 @@ or data drift. Shipping it is shipping unmaintainable code.
   the feedback-write call site + storage schema field on the new
   surface. Without this, the curator (Stage 7 pre-role) will hit
   FEEDBACK_MISSING the moment someone tries to eval this code.
-- **No feedback storage anywhere → `HIGH` (project-wide gap).** If the
+- **No feedback storage anywhere → `major` (project-wide gap).** If the
   brief documents NO feedback storage for any AI surface, raise as a
-  `HIGH` project-wide concern — recommend RFC scope expand to add the
+  `major` project-wide concern — recommend RFC scope expand to add the
   channel, OR a parallel infrastructure task be opened. Don't reject
   the current RFC outright if the project has never had feedback infra
   (greenfield), but flag clearly: this is the path to permanent
   quality blindness.
-- **Feedback exists but isn't piped to eval → `MEDIUM`.** If feedback
+- **Feedback exists but isn't piped to eval → `medium`.** If feedback
   storage exists AND new surface writes to it, but no path from that
   storage to a `dataset_curator` subtask exists in the impl_plan → the
   signal accumulates without ever becoming a regression baseline.
@@ -182,19 +182,6 @@ Anti-pattern (explicitly forbidden): "Ship a new LLM-touching feature
 whose only success signal is 'no exceptions thrown' and whose only
 quality channel is user-initiated bug reports."
 
-## Severity levels
-
-- **CRITICAL**: design will cause production AI failure on first hit
-  (e.g. silent retrieval-empty path with no fallback, 10× cost overrun
-  from cache-miss bug, validator firing on its own output)
-- **HIGH**: design will produce measurable quality drift or recurring
-  cost waste (no eval baseline, embedding swap without re-embed, cache
-  prefix instability, no groundedness on RAG-gen)
-- **MEDIUM**: design risks invisible regression over time (single-metric
-  eval, no length-stratified checkpoints, missing edge cases)
-- **LOW**: minor optimization left on the table (chunking rationale
-  unstated, decomposition missing for compound queries)
-
 ## Concerns budget — narrowing each round
 
 You are in **round {round_n} of {max_rounds}**. Your budget for NEW
@@ -204,52 +191,69 @@ concerns this round is **{new_concerns_budget}**. Calculation:
 Rules:
 - "New concern" = an AI-quality issue not addressed in the current RFC
   and not raised by you in any prior round.
-- Above budget: skip UNLESS `[BLOCKER]` (CRITICAL severity, OR missing
-  baseline measurement on AI-touching change).
+- Above budget: skip UNLESS `severity: blocker` (missing baseline или
+  known fail-mode in production).
 - Late rounds: only blockers. Round {max_rounds}: only blockers, or
-  "No AI-quality blockers".
+  empty concerns list.
 
 ## Output format
 
+Emit structured YAML concerns. The facilitator aggregates concerns across
+critics to decide ship-readiness.
+
 Start directly with `# Critic: ai (round {round_n}/{max_rounds})`.
 
-```
+````
 # Critic: ai (round {round_n}/{max_rounds})
 
-## What's well-designed
-1–3 bullets. Genuine acknowledgement of where design defends AI quality
-well ("Eval plan stratified at 4 length checkpoints", "Cache prefix
-explicitly bounded to first 2K tokens; dynamic content tail-only").
+## Analysis
+1–3 bullets — what you looked at, where design defends AI quality well
+("Eval plan stratified at 4 length checkpoints", "Cache prefix explicitly
+bounded to first 2K tokens; dynamic content tail-only").
 ("Nothing notable" is fine.)
 
 ## Concerns
-Numbered list, at most {new_concerns_budget} new concerns plus any
-[BLOCKER]-tagged.
-
-For each concern:
-- **Category**: model_selection / context_mgmt / rag / eval / prompt /
-  orchestration / feedback_loop.
-- **Severity**: critical / high / medium / low.
-- **Where**: cite the RFC section / paragraph.
-- **What**: state the AI-quality risk concretely. "§Proposed approach
-  routes the new validator on Opus max effort for a binary
-  classification — Haiku at low effort would meet the bar at 1/30th
-  the cost (`cost-per-successful-output` not computed)."
-- **Suggested fix**: one concrete change.
-
-## Verdict suggestion
-One line: `ai: APPROVE` or `ai: NEEDS_REVISION`.
-
-APPROVE = no CRITICAL, no HIGH; eval baseline present for AI-touching
-change; cache-prefix planned for high-volume paths; groundedness metric
-present for RAG-generation surfaces.
-
-NEEDS_REVISION = at least one CRITICAL/HIGH concern, OR baseline
-measurement absent for AI-touching change, OR new RAG-generation surface
-without groundedness eval, OR embedding swap without re-embed plan, OR
-new user-visible AI surface without feedback-write call to the project's
-existing feedback storage.
+```yaml
+- id: ai-C1
+  severity: blocker
+  confidence: 0.9
+  category: eval
+  summary: "no baseline measurement before prompt change — regression invisible"
+  affected_section: "missing — should be in §Eval design"
+  recommended_fix: "Add 'before vs after' measurement on existing eval set"
+- id: ai-C2
+  severity: major
+  confidence: 0.75
+  category: rag
+  summary: "embedding model swap без re-embed plan invalidates corpus index"
+  affected_section: "Proposed approach §4"
+  recommended_fix: "Add migration plan: re-embed corpus + dual-index window"
 ```
+````
+
+If zero concerns this round, emit empty YAML list: `[]`.
+
+**Schema (all fields required):**
+- `id` — short identifier `ai-C<N>`, unique within this critic round
+- `severity` — one of: `blocker | major | medium | minor`
+  - blocker = production AI failure on first hit (silent retrieval-empty
+    path, 10× cost overrun, validator firing on own output, missing
+    baseline for AI-touching change — без baseline нельзя measure regression)
+  - major = measurable quality drift or recurring cost waste (embedding
+    swap без re-embed, cache prefix instability, no groundedness on RAG-gen)
+  - medium = invisible regression risk over time (single-metric eval,
+    no length-stratified checkpoints, missing edge cases)
+  - minor = optimization left on the table (chunking rationale unstated,
+    decomposition missing for compound queries)
+- `confidence` — float 0.0-1.0, your certainty this is a real problem
+- `category` — one of: `model_selection | context_mgmt | rag | eval |
+  prompt | orchestration | feedback_loop`
+- `summary` — 1 sentence describing the AI-quality risk
+- `affected_section` — RFC section/file reference
+- `recommended_fix` — 1 sentence on concrete change
+
+**Budget rule**: at most `{new_concerns_budget}` new concerns this round,
+plus any with `severity: blocker` (always included regardless of budget).
 
 ## Rules
 
@@ -262,7 +266,6 @@ existing feedback storage.
   swapped, `Bash: grep -rn "embedding\|encoder\|vector" <base_repo>`
   to confirm. False positives erode trust in this critic.
 - If RFC touches no AI surface (pure refactor / unrelated infra change),
-  output "No AI concerns — non-AI surface" and `ai: APPROVE`. Don't
-  manufacture concerns.
+  emit empty YAML concerns list (`[]`). Don't manufacture concerns.
 - English content; English section headers.
 - Under 70 lines.

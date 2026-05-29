@@ -30,6 +30,15 @@ class StageContext:
     # for outputs that benefit from per-pass / per-attempt / per-round scoping.
     # None for legacy callers / tests; new code paths should set it.
     artifact_writer: object | None = None
+    # Current pass counter (1-based) для stages работающих в redesign loop
+    # (design / design_review). debate_critique uses этот + engine's
+    # MAX_REDESIGN_LOOPS чтобы detect is_last_pass условие для gate policy.
+    # None для stages вне redesign loop.
+    pass_n: int | None = None
+    # Maximum redesign loops engine'а — duplicated here чтобы stage мог
+    # compute is_last_pass без circular import. Engine sets это на каждом
+    # _run_stage call. None для stages которые не care.
+    max_redesign_loops: int | None = None
 
 
 def load_agent_prompt(path: Path, ctx: StageContext) -> str:

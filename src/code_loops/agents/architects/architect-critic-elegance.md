@@ -87,32 +87,56 @@ Rules:
 
 ## Output format
 
+Emit structured YAML concerns. The facilitator aggregates concerns across
+critics to decide ship-readiness.
+
 Start directly with `# Critic: elegance (round {round_n}/{max_rounds})`.
 
-```
+````
 # Critic: elegance (round {round_n}/{max_rounds})
 
-## What's clean
-1–3 bullets. Genuine acknowledgement of good design decisions.
+## Analysis
+1–3 bullets — what you looked at, what's well-shaped.
 ("Nothing notable" is fine.)
 
 ## Concerns
-Numbered list, at most {new_concerns_budget} new concerns plus any
-[BLOCKER]-tagged.
-
-For each concern:
-- Cite the RFC section / paragraph.
-- Mark `[BLOCKER]` only if the design choice would create ongoing pain.
-- Explain WHY it's an elegance issue: "introduces a generic Renderer for
-  one caller — premature abstraction" or "duplicates logic already in
-  app/foo.py:N".
-- Suggest the simpler / cleaner shape.
-
-## Verdict suggestion
-One line: `elegance: APPROVE` or `elegance: NEEDS_REVISION`.
-APPROVE = solution is well-shaped or imperfections are minor.
-NEEDS_REVISION = a blocker OR concerns that would lock in bad shape.
+```yaml
+- id: elegance-C1
+  severity: major
+  confidence: 0.85
+  category: premature_abstraction
+  summary: "generic Renderer introduced for one caller — over-engineered"
+  affected_section: "New files proposed: app/rendering/renderer.py"
+  recommended_fix: "Collapse to plain function; promote to class only after 3rd caller"
+- id: elegance-C2
+  severity: minor
+  confidence: 0.6
+  category: duplication
+  summary: "logic duplicates app/foo.py:42 — should reuse existing helper"
+  affected_section: "File-level changes — bar.py"
+  recommended_fix: "Import foo.normalize() instead"
 ```
+````
+
+If zero concerns this round, emit empty YAML list: `[]`.
+
+**Schema (all fields required):**
+- `id` — short identifier `elegance-C<N>`, unique within this critic round
+- `severity` — one of: `blocker | major | medium | minor`
+  - blocker = locks in pain requiring rework (wrong abstraction across 5+
+    call sites; data shape needing migration)
+  - major = real elegance issue worth fixing before ship
+  - medium = elegance concern, lower urgency
+  - minor = small stylistic issue
+- `confidence` — float 0.0-1.0, your certainty this is a real problem
+- `category` — short snake_case tag (`premature_abstraction`,
+  `duplication`, `generic_name`, `wrong_layer`, `over_engineering`, etc)
+- `summary` — 1 sentence describing the concern
+- `affected_section` — RFC section/file reference
+- `recommended_fix` — 1 sentence on simpler/cleaner shape
+
+**Budget rule**: at most `{new_concerns_budget}` new concerns this round,
+plus any with `severity: blocker` (always included regardless of budget).
 
 ## Rules
 

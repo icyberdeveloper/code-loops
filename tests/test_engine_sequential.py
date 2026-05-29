@@ -7,9 +7,24 @@ from unittest.mock import patch
 
 import yaml
 
-from code_loops.engine import Engine
+from code_loops.engine import VERDICTS_TRIGGERING_REDESIGN, Engine
 from code_loops.runner import RunnerResult
 from tests.conftest import FakeFactory
+
+
+def test_verdicts_triggering_redesign_contains_expected_set():
+    """Bubble-back trigger set: только redesign_needed и
+    needs_revision_max_rounds. approved + approved_with_followups шипают
+    через к downstream stages (impl_planner reads followups.md)."""
+    assert "redesign_needed" in VERDICTS_TRIGGERING_REDESIGN
+    assert "needs_revision_max_rounds" in VERDICTS_TRIGGERING_REDESIGN
+    # Critical: approved_with_followups НЕ должно bubble back. Если попадёт
+    # в set — это re-introduce'нет quality treadmill (approve + still
+    # iterate), defeats весь смысл Step 1 implementation.
+    assert "approved_with_followups" not in VERDICTS_TRIGGERING_REDESIGN
+    assert "approved" not in VERDICTS_TRIGGERING_REDESIGN
+    # Frozen set — immutable invariant
+    assert isinstance(VERDICTS_TRIGGERING_REDESIGN, frozenset)
 
 
 def _make_pipeline(tmp_path: Path, stages: list[dict]) -> Path:

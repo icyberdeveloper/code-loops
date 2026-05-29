@@ -59,11 +59,16 @@ class RunnerError(RuntimeError):
 
 
 class RunnerFactory:
-    """Builds ClaudeRunner instances honoring per-stage / per-role overrides.
+    """Builds provider-specific runners honoring per-stage / per-role overrides.
 
-    Defaults: Opus 4.7 with max effort. A stage or role spec may override
-    `model` and/or `effort` — typically Sonnet for cheap critique/judgment
-    roles in debate stages.
+    Defaults: Opus 4.7 with max effort (ClaudeRunner). A stage or role spec
+    may override `model` и/или `effort`. Dispatcher:
+      - `claude-*` (or default) → ClaudeRunner (subprocess CLI, supports tools)
+      - `gpt-*`, `o3*`, `o1*` → OpenAIRunner (SDK, для cross-family judge)
+
+    Cross-family rationale per MACI (arxiv 2510.04488): different LLM family
+    judge breaks self-confirming bias loops от same-family critic+facilitator.
+    Anthropic Claude critics + OpenAI GPT facilitator — actual cross-family.
     """
 
     def __init__(
@@ -74,12 +79,19 @@ class RunnerFactory:
         self.default_model = default_model
         self.default_effort = default_effort
 
-    def make(self, spec: dict | None = None) -> ClaudeRunner:
+    def make(self, spec: dict | None = None):
         spec = spec or {}
-        return ClaudeRunner(
-            model=spec.get("model", self.default_model),
-            effort=spec.get("effort", self.default_effort),
-        )
+        model = spec.get("model", self.default_model)
+        effort = spec.get("effort", self.default_effort)
+        # Lazy import OpenAIRunner — avoid forcing openai SDK на pipelines
+        # которые используют только Claude.
+        from .openai_runner import is_openai_model
+
+        if is_openai_model(model):
+            from .openai_runner import OpenAIRunner
+
+            return OpenAIRunner(model=model, effort=effort)
+        return ClaudeRunner(model=model, effort=effort)
 
 
 class ClaudeRunner:
@@ -87,13 +99,13 @@ class ClaudeRunner:
         self,
         model: str = "claude-opus-4-7",
         effort: str = "max",
-        # Раньше 1200s, поднято до 2400s после run #5 retry:
-        # constrained decoding (--json-schema) добавляет grammar compilation
-        # overhead ~5s per cold call + увеличивает latency финального
-        # token sampling. Pass_2 design ~17 мин average per writer call,
-        # один pass_3 call не уложился в 1200s. 2400s даёт headroom для
-        # больших RFC drafts при sustained constrained decoding.
-        timeout_s: int = 2400,
+        # Раньше 1200s → 2400s (run #5 retry). Bumped до 3600s после
+        # retry #11 timeout: draft_v5 завис >40 мин при 5-round design
+        # convergence. Pattern: первые 4 drafts стабильно 9-11 мин, 5-й
+        # anomalously долго — возможно claude CLI stall или context bloat
+        # на финальной revision. 60 мин даёт reasonable headroom без
+        # ridiculous waiting на real stuck calls.
+        timeout_s: int = 3600,
     ):
         self.model = model
         self.effort = effort

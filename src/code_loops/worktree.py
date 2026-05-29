@@ -27,6 +27,23 @@ class TestProtectionViolation(RuntimeError):
         super().__init__(f"Coder modified protected test files: {files}")
 
 
+class RoleScopeViolation(RuntimeError):
+    """Role wrote files outside its declared can_write scope (Fix B).
+
+    Used by subtask iterator после каждой role чтобы catch overstep.
+    Например eval_engineer wrote test_writer's deliverable файл —
+    immediate failure с explicit scope feedback for next iteration.
+    """
+
+    def __init__(self, violations: list[str], allowed: list[str]):
+        self.violations = violations
+        self.allowed = allowed
+        super().__init__(
+            f"Role wrote files outside declared scope: {violations}. "
+            f"Allowed: {allowed}"
+        )
+
+
 def _run_git(repo: Path, *args: str, check: bool = True, capture: bool = True) -> str:
     cmd = ["git", "-C", str(repo), *args]
     proc = subprocess.run(cmd, capture_output=capture, text=True, check=False)
@@ -46,6 +63,33 @@ class Worktree:
         self.base_repo = Path(base_repo)
         self.branch = branch
         self.path = Path(path)
+
+    @classmethod
+    def adopt(cls, base_repo: Path, branch: str, target_path: Path) -> Worktree:
+        """Adopt existing worktree at target_path без recreation.
+
+        Used by subtask iterator on --from-stage resume чтобы preserve
+        prior pipeline run's working-tree state (eval_engineer/test_writer
+        commits + uncommitted changes). Validates worktree exists и has
+        `code-loops/base` tag (sanity check что это наш worktree).
+
+        Raises WorktreeError если worktree absent или corrupt.
+        """
+        base_repo = Path(base_repo).resolve()
+        target_path = Path(target_path).resolve()
+        if not target_path.exists() or not (target_path / ".git").exists():
+            raise WorktreeError(
+                f"No existing worktree at {target_path} to adopt — use create()"
+            )
+        wt = cls(base_repo, branch, target_path)
+        # Sanity: base tag exists (set on initial creation)
+        try:
+            _run_git(target_path, "rev-parse", "code-loops/base")
+        except WorktreeError:
+            raise WorktreeError(
+                f"Worktree at {target_path} missing code-loops/base tag — not a code-loops worktree"
+            ) from None
+        return wt
 
     @classmethod
     def create(
@@ -155,6 +199,65 @@ class Worktree:
         sha = self.head_sha()
         _run_git(self.path, "tag", "-f", "code-loops/base", sha, check=True)
 
+    def base_sha(self) -> str:
+        """Public accessor for pipeline-start SHA (the base-tag point).
+
+        Used by subtask_iterator для diff'ов / test_protection — все
+        compare против этого pinned point, не per-role commits. Atomic
+        commit pattern: один финальный commit после full pipeline success.
+        """
+        return self._base_branch_sha()
+
+    def snapshot_tree(self) -> str:
+        """Capture current working tree state as tree SHA (idempotent).
+
+        Stages all changes (tracked + untracked) и writes a tree object.
+        Returns tree SHA. Used by per-role guards (Fix A atomic commits)
+        чтобы compare что THIS role изменил, не "что вообще есть в worktree".
+
+        Index left with everything staged — harmless для subsequent calls
+        (они опять git add -A независимо).
+        """
+        _run_git(self.path, "add", "-A")
+        return _run_git(self.path, "write-tree").strip()
+
+    def changed_files_between(
+        self,
+        before_tree: str,
+        after_tree: str,
+        in_paths: list[str] | None = None,
+    ) -> list[str]:
+        """List files changed between two tree SHAs, optionally filtered by path prefix.
+
+        Works для tree SHAs (from snapshot_tree) и commit SHAs equally —
+        git treats them interchangeably в diff-tree.
+        """
+        out = _run_git(self.path, "diff-tree", "-r", "--name-only", before_tree, after_tree)
+        files = [line.strip() for line in out.splitlines() if line.strip()]
+        if in_paths:
+            normalized = [p.rstrip("/") for p in in_paths]
+            files = [f for f in files if _path_under_any(f, normalized)]
+        return files
+
+    def rollback_paths(self, paths: list[str], to_tree: str) -> None:
+        """Revert specific worktree paths к state captured in `to_tree`.
+
+        Used when a per-role scope violation is detected — drops the offending
+        writes while preserving the role's in-scope contributions. For each path:
+        - if present in `to_tree`: `git checkout` restores к that snapshot
+        - if absent: file was newly created by the role → unlink на disk
+        """
+        for path in paths:
+            in_tree = _run_git(
+                self.path, "ls-tree", "-r", "--name-only", to_tree, "--", path
+            ).strip()
+            if in_tree:
+                _run_git(self.path, "checkout", to_tree, "--", path)
+            else:
+                fpath = self.path / path
+                if fpath.exists():
+                    fpath.unlink()
+
     # ---- test protection ----
     #
     # Configurable per project via project.yaml `test_infrastructure`:
@@ -212,6 +315,56 @@ class Worktree:
             for root, _dirs, files in os.walk(tests_dir):
                 for f in files:
                     (Path(root) / f).chmod(0o644)
+
+    def assert_only_touched(
+        self,
+        allowed_paths: list[str],
+        since_sha: str,
+    ) -> None:
+        """Hard guard: raise RoleScopeViolation если role wrote files outside
+        allowed_paths. Used by subtask iterator после каждой role чтобы prevent
+        scope overstep (см. Fix B atomic plan).
+
+        allowed_paths: list of file path patterns role may write to. Empty list
+        = role cannot write anything (e.g. coder в verification-only subtask).
+        Path matching: exact match OR file под declared directory prefix.
+
+        Skips check if allowed_paths is None (role has no scope restriction —
+        для backwards compat с subtasks без roles block).
+        """
+        if allowed_paths is None:
+            return
+        # Get all files touched since reference SHA (committed + working tree)
+        committed = _run_git(self.path, "diff", "--name-only", since_sha).splitlines()
+        # Working tree changes — staged + unstaged + untracked
+        working_status = _run_git(self.path, "status", "--porcelain").splitlines()
+        working_files: list[str] = []
+        for line in working_status:
+            line = line.strip()
+            if not line:
+                continue
+            # Parse porcelain format: "XY filename" or "XY old -> new"
+            parts = line.split(None, 1)
+            if len(parts) >= 2:
+                fname = parts[1]
+                if " -> " in fname:
+                    fname = fname.split(" -> ")[1]
+                working_files.append(fname.strip())
+        touched = set(committed) | set(working_files)
+        touched = {p for p in touched if p.strip()}
+        if not touched:
+            return
+        # Match touched against allowed_paths: exact OR dir-prefix.
+        allowed_normalized = [p.rstrip("/") for p in allowed_paths]
+        violations: list[str] = []
+        for path in touched:
+            if _path_under_any(path, allowed_normalized):
+                continue
+            if path in allowed_paths:
+                continue
+            violations.append(path)
+        if violations:
+            raise RoleScopeViolation(violations, allowed_paths)
 
     def assert_no_test_changes(
         self,

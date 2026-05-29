@@ -1,0 +1,36 @@
+# Release policy для design_review stage.
+#
+# Engine применяет эту policy ТОЛЬКО когда:
+#   1. is_plateau == True (cross-round fingerprint convergence signals
+#      arbiter не может выйти из treadmill), OR
+#   2. is_last_pass == True (current pass equals MAX_REDESIGN_LOOPS —
+#      следующий redesign trigger вызовет catastrophic exit pipeline'а)
+#
+# Без этих триггеров — arbiter имеет full authority, gate не intervenes.
+#
+# Когда gate активен, его decision overrides arbiter's verdict:
+#   numbers within ceilings → final = approved (ship)
+#   numbers exceeded        → final = needs_revision (one more round)
+# Arbiter's verdict (включая redesign_needed) ignored — записан в
+# debate.md/verdict.md для post-hoc analysis но не enforced.
+#
+# Per-severity policy:
+#   min_confidence — concerns с confidence ниже игнорируются (noise floor)
+#                    Inverted scale: blocker low bar (catch speculation),
+#                    minor high bar (только confident minors actually matter)
+#   ceiling — max allowed concerns этого severity для ship verdict
+#             (-1 = unlimited)
+
+severities:
+  blocker:
+    min_confidence: 0.3      # low bar — catch даже speculative ship-stoppers
+    ceiling: 0               # 0 blockers tolerated
+  major:
+    min_confidence: 0.4
+    ceiling: 1               # 1 major OK
+  medium:
+    min_confidence: 0.5
+    ceiling: 5
+  minor:
+    min_confidence: 0.7      # high bar — только confident minors count
+    ceiling: -1              # unlimited

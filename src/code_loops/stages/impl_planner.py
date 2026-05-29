@@ -34,8 +34,26 @@ class ImplPlannerStage:
         prompt_path = ctx.repo_root / stage_def["prompt"]
         sys_prompt = load_agent_prompt(prompt_path, ctx)
         rfc = (ctx.task_dir / "design" / "final.md").read_text()
+        # Read followups.md if design_review shipped approved_with_followups
+        # — tech-lead must surface these in the subtask plan as tracked work
+        # so non-blocking concerns don't get lost on the floor.
+        followups_path = ctx.task_dir / "design_review" / "followups.md"
+        followups_block = ""
+        if followups_path.exists():
+            followups_block = (
+                f"\n=== design_review/followups.md ===\n{followups_path.read_text()}\n"
+                "The RFC above shipped with `approved_with_followups` verdict. The "
+                "followups above are real concerns flagged by the review board but "
+                "deemed ship-safe (FOLLOWUP severity — bounded blast radius). You "
+                "MUST surface each followup in your implementation plan: add one "
+                "tracked subtask per followup category (id prefix `followup_`) "
+                "scoped to capture the concern as either (a) a deferred work item "
+                "with explicit ticket-style description, or (b) a thin "
+                "implementation extension if the followup is small enough to handle "
+                "in this RFC's scope. Do NOT silently drop them.\n"
+            )
         user_msg = (
-            f"=== design/final.md ===\n{rfc}\n\n"
+            f"=== design/final.md ===\n{rfc}\n{followups_block}\n"
             "Produce the Implementation Plan as specified by your system prompt: "
             "narrative sections plus a strictly-schema'd `subtasks` YAML block."
         )
@@ -169,6 +187,60 @@ def _split_plan_and_subtasks(text: str) -> tuple[str, dict]:
 
 SNAKE_CASE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
+# Subtask modes — drive validator semantics (см. subtask_iterator._run_validator
+# или subtask_executor mode dispatch). Default = "tdd" preserves prior behavior.
+VALID_SUBTASK_MODES: frozenset[str] = frozenset({"tdd", "baseline", "refactor", "hotfix"})
+
+# Acceptance criterion types — machine-verifiable post-conditions tech-lead
+# pre-declares per subtask. Validator проверяет каждый детерминированно;
+# violations = subtask not shipped.
+VALID_ACCEPTANCE_TYPES: frozenset[str] = frozenset({
+    "pytest_collected_count",     # pytest --collect-only count == target
+    "pytest_outcome_count",       # pytest counts: {passed, failed, xfailed, ...}
+    "file_contains_pattern",      # regex match required
+    "file_not_contains_pattern",  # regex must NOT match
+    "file_size_min",              # min bytes
+    "ruff_clean",                 # ruff exits 0 for given file/dir
+    "json_path_exists",           # json file has structural path
+})
+
+
+def _validate_acceptance(prefix: str, acceptance) -> None:
+    if not isinstance(acceptance, list):
+        raise ImplPlannerError(f"{prefix}.acceptance must be a list of check objects.")
+    for j, check in enumerate(acceptance):
+        cp = f"{prefix}.acceptance[{j}]"
+        if not isinstance(check, dict):
+            raise ImplPlannerError(f"{cp} must be a mapping.")
+        ctype = check.get("type")
+        if ctype not in VALID_ACCEPTANCE_TYPES:
+            raise ImplPlannerError(
+                f"{cp}.type must be one of {sorted(VALID_ACCEPTANCE_TYPES)}; got {ctype!r}"
+            )
+        # Per-type required fields
+        if ctype in {"file_contains_pattern", "file_not_contains_pattern"}:
+            if not check.get("file") or not check.get("pattern"):
+                raise ImplPlannerError(f"{cp} ({ctype}) requires `file` + `pattern`.")
+        elif ctype == "pytest_collected_count":
+            if "target" not in check or not isinstance(check["target"], int):
+                raise ImplPlannerError(f"{cp} ({ctype}) requires integer `target`.")
+        elif ctype == "pytest_outcome_count":
+            if not isinstance(check.get("outcomes"), dict):
+                raise ImplPlannerError(
+                    f"{cp} ({ctype}) requires `outcomes` dict (e.g. {{passed: 2, xfailed: 16}})."
+                )
+        elif ctype == "file_size_min":
+            if not check.get("file") or not isinstance(check.get("bytes"), int):
+                raise ImplPlannerError(f"{cp} ({ctype}) requires `file` + integer `bytes`.")
+        elif ctype == "ruff_clean" and not check.get("file"):
+            raise ImplPlannerError(f"{cp} ({ctype}) requires `file` (path or dir).")
+        elif ctype == "json_path_exists" and (
+            not check.get("file") or not isinstance(check.get("path"), list)
+        ):
+            raise ImplPlannerError(
+                f"{cp} ({ctype}) requires `file` + `path` (list of str/int keys)."
+            )
+
 
 def _validate_subtasks(data: dict) -> None:
     if "subtasks" not in data:
@@ -254,6 +326,17 @@ def _validate_subtasks(data: dict) -> None:
                     f"{prefix}.needs must be a list of non-empty role-name strings "
                     "(e.g. [prompt_engineer, eval_engineer])."
                 )
+
+        # mode + acceptance — optional, additive (Phase 1 pivot к editor model).
+        # Default mode = tdd preserves prior behavior for legacy subtasks.yaml.
+        if "mode" in st:
+            mode = st["mode"]
+            if mode not in VALID_SUBTASK_MODES:
+                raise ImplPlannerError(
+                    f"{prefix}.mode must be one of {sorted(VALID_SUBTASK_MODES)}; got {mode!r}"
+                )
+        if "acceptance" in st:
+            _validate_acceptance(prefix, st["acceptance"])
 
     # Wave-level invariants: within a wave, no shared files and no inter-deps.
     _validate_waves(subtasks)

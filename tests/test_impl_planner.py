@@ -231,6 +231,50 @@ def test_needs_field_rejects_empty_string_entries():
         _validate_subtasks(_data(_st(id="a", needs=["prompt_engineer", ""])))
 
 
+def test_mode_field_accepts_valid_values():
+    """SHIELDA pivot Phase 1: mode field optional, must be one of valid set."""
+    for mode in ("tdd", "baseline", "refactor", "hotfix"):
+        _validate_subtasks(_data(_st(id=f"x_{mode}", mode=mode)))
+
+
+def test_mode_field_rejects_invalid():
+    with pytest.raises(ImplPlannerError, match="mode must be one of"):
+        _validate_subtasks(_data(_st(mode="invented")))
+
+
+def test_acceptance_field_optional_and_validated():
+    """acceptance is optional; when present, validate each check shape."""
+    crit = [
+        {"type": "file_contains_pattern", "file": "x.py", "pattern": "foo"},
+        {"type": "ruff_clean", "file": "x.py"},
+    ]
+    _validate_subtasks(_data(_st(acceptance=crit)))
+
+
+def test_acceptance_rejects_unknown_type():
+    crit = [{"type": "made_up", "file": "x.py"}]
+    with pytest.raises(ImplPlannerError, match="acceptance"):
+        _validate_subtasks(_data(_st(acceptance=crit)))
+
+
+def test_acceptance_file_contains_requires_pattern():
+    crit = [{"type": "file_contains_pattern", "file": "x.py"}]  # no pattern
+    with pytest.raises(ImplPlannerError, match="requires .file. \\+ .pattern."):
+        _validate_subtasks(_data(_st(acceptance=crit)))
+
+
+def test_acceptance_pytest_collected_requires_integer_target():
+    crit = [{"type": "pytest_collected_count", "target": "seventeen"}]
+    with pytest.raises(ImplPlannerError, match="integer .target."):
+        _validate_subtasks(_data(_st(acceptance=crit)))
+
+
+def test_acceptance_pytest_outcome_requires_dict():
+    crit = [{"type": "pytest_outcome_count"}]
+    with pytest.raises(ImplPlannerError, match=".outcomes. dict"):
+        _validate_subtasks(_data(_st(acceptance=crit)))
+
+
 def test_subtasks_without_explicit_wave_skip_wave_checks():
     # Two subtasks touching the same file, no explicit wave — should pass
     # (wave grouping is opt-in).
@@ -393,3 +437,49 @@ def test_impl_planner_records_failed_attempts_in_manifest(tmp_path):
     assert attempts[0]["outcome"] == "schema_failed"
     assert "snake_case" in attempts[0]["reason"]
     assert attempts[1]["outcome"] == "ok"
+
+
+def test_impl_planner_reads_followups_md_when_present(tmp_path):
+    """approved_with_followups path: design_review шипнул RFC + followups.md
+    с tracked concerns. impl_planner ДОЛЖЕН прочитать followups.md и подать
+    их в user_msg для tech-lead — чтобы non-blocker concerns не потерялись."""
+    repo, task_dir = _make_repo_and_task(tmp_path)
+    # Эмулируем что debate_critique уже записал followups.md
+    (task_dir / "design_review").mkdir()
+    followups_text = (
+        "# Followups — design_review pass 1\n\n"
+        "**Verdict:** approved_with_followups\n\n"
+        "## safety\n1. **[FOLLOWUP]** add tz invariant test\n"
+        "## elegance\n1. **[FOLLOWUP]** extract render helper later\n"
+    )
+    (task_dir / "design_review" / "followups.md").write_text(followups_text)
+
+    runner = ScriptedRunner([RunnerResult(text=VALID_OUTPUT, cost_usd=0.50, duration_s=10.0)])
+    stage = ImplPlannerStage(FakeFactory(runner))
+    ctx = StageContext(task_dir=task_dir, prompts_dir=repo / "agents", repo_root=repo)
+    stage.run(_stage_def(), ctx)
+
+    # User message tech-lead'у должен содержать followups block + instruction
+    _sys, user_msg = runner.calls[0]
+    assert "design_review/followups.md" in user_msg
+    assert "approved_with_followups" in user_msg
+    assert "add tz invariant test" in user_msg
+    assert "extract render helper later" in user_msg
+    # Instruction для tech-lead surface them as tracked subtasks
+    assert "followup_" in user_msg
+    assert "Do NOT silently drop them" in user_msg
+
+
+def test_impl_planner_works_without_followups_md(tmp_path):
+    """Regular approval path (no followups) — impl_planner работает без
+    followups block, backwards compat preserved."""
+    repo, task_dir = _make_repo_and_task(tmp_path)
+    runner = ScriptedRunner([RunnerResult(text=VALID_OUTPUT, cost_usd=0.50, duration_s=10.0)])
+    stage = ImplPlannerStage(FakeFactory(runner))
+    ctx = StageContext(task_dir=task_dir, prompts_dir=repo / "agents", repo_root=repo)
+    stage.run(_stage_def(), ctx)
+
+    _sys, user_msg = runner.calls[0]
+    # Без followups.md — user_msg не должен иметь упоминаний
+    assert "followups.md" not in user_msg
+    assert "approved_with_followups" not in user_msg

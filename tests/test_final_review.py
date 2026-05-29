@@ -90,6 +90,44 @@ def test_verdict_invalid_json_falls_back():
     assert "JSON parse error" in v["reason"]
 
 
+def test_verdict_with_nested_sql_codeblocks_in_spec_md():
+    """Regression (Phase 4 cutover): non-greedy `.*?` regex matched the first
+    `\\n```` inside spec_md (containing ```sql nested blocks), failing parse.
+    Fix uses json.JSONDecoder.raw_decode для brace-balanced extraction."""
+    text = (
+        "analysis prose...\n\n```json\n"
+        '{"verdict": "needs_more_work", "reason": "Schema mismatch",\n'
+        ' "corrective_subtasks": [{\n'
+        '   "id": "fix_schema",\n'
+        '   "title": "Rewrite store к match RFC schema",\n'
+        '   "files": {"modify": ["app/store.py"]},\n'
+        '   "spec_md": "Required schema:\\n```sql\\nCREATE TABLE foo (id INTEGER);\\n```\\nApply this."\n'
+        " }]}\n```\n\nTrailing prose."
+    )
+    v = _parse_verdict(text)
+    assert v["verdict"] == "needs_more_work"
+    assert v["reason"] == "Schema mismatch"
+    assert len(v["corrective_subtasks"]) == 1
+    assert v["corrective_subtasks"][0]["id"] == "fix_schema"
+
+
+def test_verdict_handles_multiple_codeblocks_in_spec_md():
+    """raw_decode правильно parses regardless of ` ``` ` content inside strings."""
+    text = (
+        "```json\n"
+        '{"verdict": "needs_more_work", "reason": "fixme",\n'
+        ' "corrective_subtasks": [{\n'
+        '   "id": "ticket_a",\n'
+        '   "title": "Fix X",\n'
+        '   "files": {"modify": ["a.py"]},\n'
+        '   "spec_md": "Line 1\\n```python\\nprint(1)\\n```\\nLine 3\\n```yaml\\nfoo: bar\\n```"\n'
+        " }]}\n```"
+    )
+    v = _parse_verdict(text)
+    assert v["verdict"] == "needs_more_work"
+    assert len(v["corrective_subtasks"]) == 1
+
+
 def test_stage_instantiates():
     """Smoke: the stage class can be constructed with a factory."""
     s = _stage()

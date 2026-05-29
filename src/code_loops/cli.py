@@ -14,18 +14,26 @@ from pathlib import Path
 
 import typer
 import yaml
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
-from .engine import Engine
-from .eval_aggregator import (
+# Load .env from CWD (repo root) на CLI startup ДО других code_loops imports,
+# чтобы OPENAI_API_KEY был доступен когда RunnerFactory или OpenAIRunner
+# инициализируется. Не overwriting уже выставленных env vars (override=False
+# default), чтобы оператор мог temporary override через shell export.
+# noqa: E402 на последующих imports обоснован — это canonical dotenv pattern.
+load_dotenv()
+
+from .engine import Engine  # noqa: E402
+from .eval_aggregator import (  # noqa: E402
     aggregate_recent_runs,
     build_eval_message,
     get_recent_agent_changes,
 )
-from .manifest import Manifest
-from .project_loader import PROJECTS_DIR, list_projects, load_project_config
-from .runner import RunnerFactory
+from .manifest import Manifest  # noqa: E402
+from .project_loader import PROJECTS_DIR, list_projects, load_project_config  # noqa: E402
+from .runner import RunnerFactory  # noqa: E402
 
 # Package data (pipeline.yaml, agents/) ships inside the wheel — resolved
 # from this module's location. Works in both editable and pip install.

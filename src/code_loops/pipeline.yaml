@@ -17,7 +17,7 @@
 #   strategy/      business-analyst, tech-lead
 #   research/      research-lead + 5x researcher-*
 #   architects/    software-architect + 5x architect-*
-#   engineering/   qa-engineer, software-engineer, code-reviewer, triage-engineer
+#   engineering/   editor, replanner
 #   release/       release-manager, tech-writer
 #   meta/          pipeline-evaluator (invoked by `code-loops eval` CLI)
 #
@@ -125,6 +125,16 @@ stages:
         prompt: agents/architects/software-architect.md
       - role: facilitator
         prompt: agents/architects/architect-review-arbiter.md
+        # Real cross-family calibration per MACI (arxiv 2510.04488).
+        # Critics — Anthropic Claude (Opus 4.7). Facilitator — OpenAI GPT-5.
+        # Different training corpus + different RLHF priors → independent
+        # assessment of ship-readiness vs recurring-theme detection. Это
+        # mitigates the self-confirming bias loop где same-family judge
+        # reinforces critic priors. Sonnet vs Opus был intra-family size
+        # delta — НЕ настоящий cross-family per MACI definition.
+        #
+        # Requires OPENAI_API_KEY env var (loaded via .env at CLI startup).
+        model: gpt-5
     human_review: true
 
   # 6. Tech Lead decomposes approved design into atomic subtasks
@@ -136,14 +146,9 @@ stages:
     outputs: [impl_plan/plan.md, impl_plan/subtasks.yaml]
     human_review: true
 
-  # 7. TDD loop per subtask: QA writes failing tests → Software Engineer implements
-  #    → Code Reviewer audits → Triage Engineer routes failures.
-  #    Worktree-isolated; tests/ chmod 444 between writer + coder; STUCK escalates.
-  #
-  #    Optional pre-roles (planner-driven): if tech-lead emits a subtask with
-  #    `needs: [prompt_engineer, eval_engineer]` in subtasks.yaml, those roles
-  #    are invoked BEFORE test_writer. Generic engine dispatch — any role
-  #    declared here is invokable by name from the planner.
+  # 7. Aider-style implementation: tech-lead spec → editor (Opus) executes per
+  #    subtask → mode-aware validator (pytest + ruff + acceptance) → ship | retry | replan.
+  #    Claude Code permission sandbox restricts editor to declared subtask files.
   - name: implementation
     type: subtask_iterator
     inputs: [impl_plan/subtasks.yaml]
@@ -151,22 +156,12 @@ stages:
     # base_repo is read from project.yaml (project.base_repo). See
     # ~/dev/.claude/code-loops-config/project.yaml or pass --project-config.
     roles:
-      # Planner-invoked extras (only run when subtask.needs lists them):
-      - role: prompt_engineer
-        prompt: agents/engineering/prompt-engineer.md
-      - role: dataset_curator
-        prompt: agents/engineering/dataset-curator.md
-      - role: eval_engineer
-        prompt: agents/engineering/eval-engineer.md
-      # Standard TDD loop (always run):
-      - role: test_writer
-        prompt: agents/engineering/qa-engineer.md
-      - role: coder
-        prompt: agents/engineering/software-engineer.md
-      - role: reviewer
-        prompt: agents/engineering/code-reviewer.md
-      - role: fix_router
-        prompt: agents/engineering/triage-engineer.md
+      - role: editor
+        prompt: agents/engineering/editor.md
+        model: claude-opus-4-7
+        effort: max
+      - role: replanner
+        prompt: agents/engineering/replanner.md
 
   # 8. Programmatic gate (no LLM): pytest, ruff, file-coverage check
   - name: validation

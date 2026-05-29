@@ -160,14 +160,14 @@ Apply `rag-engineer` discipline, not surface mention:
 - **Reranking layer** — note the project's current reranking strategy (e.g. self-correction with score thresholds, or cross-encoder rerank). For new retrieval paths consider cross-encoder rerank (Cohere Rerank, BGE-reranker, ms-marco-MiniLM) — typical +10–30% accuracy at low extra latency.
 - **Eval framework awareness** — RAGAS / DeepEval / TruLens are industry standards. Required metrics: recall@K, MRR, faithfulness, relevance. Industry target: Recall@10 > 0.95.
 - **RAG anti-patterns** (sharp edges from rag-engineer skill — flag if RFC commits any):
-  - Fixed chunk size without semantic awareness → severity HIGH
-  - Embedding everything without metadata pre-filter → MEDIUM
-  - Same embedding model for different content types → MEDIUM
-  - First-stage retrieval results without rerank → MEDIUM
-  - Cramming maximum context into LLM prompt → MEDIUM
-  - Not measuring retrieval quality separately from generation → HIGH
-  - Stale embeddings when source documents change → MEDIUM
-  - One-strategy-fits-all queries (no hybrid) → MEDIUM
+  - Fixed chunk size without semantic awareness → severity major
+  - Embedding everything without metadata pre-filter → medium
+  - Same embedding model for different content types → medium
+  - First-stage retrieval results without rerank → medium
+  - Cramming maximum context into LLM prompt → medium
+  - Not measuring retrieval quality separately from generation → major
+  - Stale embeddings when source documents change → medium
+  - One-strategy-fits-all queries (no hybrid) → medium
 
 ## EDD principle (eval-driven development)
 

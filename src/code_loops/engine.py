@@ -23,7 +23,7 @@ from .stages.final_review import FinalReviewStage
 from .stages.impl_planner import ImplPlannerStage
 from .stages.parallel import ParallelStage
 from .stages.prompt import PromptStage, StageContext
-from .stages.subtask_iterator import SubtaskIteratorStage
+from .stages.subtask_executor import SubtaskExecutorStage
 from .stages.tech_writer import TechWriterStage
 
 # Package data: pipeline.yaml + agents/ ship inside the wheel,
@@ -46,6 +46,18 @@ MAX_REDESIGN_LOOPS = 5
 # Bumped 5→7 in parallel with MAX_REDESIGN_LOOPS bump — same rationale: give
 # loop-driven convergence room before declaring exhaustion.
 MAX_FINAL_LOOPS = 7
+
+# Verdict values that trigger bubble-back to design stage (re-run rfc writer
+# with redesign_signal.md). Other verdicts (approved, approved_with_followups)
+# pass through к downstream stages.
+# - redesign_needed: facilitator detected recurring-theme patching anti-pattern
+# - needs_revision_max_rounds: critics never converged after max_rounds — same
+#   downstream handling as redesign_needed (engine treats as redesign trigger)
+# - approved_with_followups (NOT in set): ships RFC + writes followups.md;
+#   impl_planner reads followups.md and surfaces them as tracked subtasks.
+VERDICTS_TRIGGERING_REDESIGN: frozenset[str] = frozenset(
+    {"redesign_needed", "needs_revision_max_rounds"}
+)
 
 
 def _stage_names(pipeline: dict) -> list[str]:
@@ -88,7 +100,8 @@ class Engine:
             "debate_writer": DebateWriterStage(self.factory),
             "debate_critique": DebateCritiqueStage(self.factory),
             "impl_planner": ImplPlannerStage(self.factory),
-            "subtask_iterator": SubtaskIteratorStage(self.factory),
+            "subtask_iterator": SubtaskExecutorStage(self.factory),
+            "subtask_executor": SubtaskExecutorStage(self.factory),
             "action": ActionStage(self.factory),
             "final_review": FinalReviewStage(self.factory),
             "tech_writer": TechWriterStage(self.factory),
@@ -215,7 +228,7 @@ class Engine:
             if (
                 stage_def["type"] == "debate_critique"
                 and result is not None
-                and result.get("verdict") in ("redesign_needed", "needs_revision_max_rounds")
+                and result.get("verdict") in VERDICTS_TRIGGERING_REDESIGN
             ):
                 verdict_kind = result["verdict"]
                 loop_n = self.manifest.increment_redesign_loop()
@@ -275,6 +288,12 @@ class Engine:
         console.print(f"[cyan]▶ {name}[/cyan]")
         self.manifest.stage_started(name)
         self.manifest.set_current_stage(name)
+        # current_pass_n = redesign_loop_count + 1 — 1-based pass numero.
+        # Used by debate_critique для determining is_last_pass condition.
+        # Other stages ignore. Counter incremented post-stage on
+        # redesign_needed verdict, so during first pass loop counter == 0
+        # → pass_n == 1.
+        current_pass_n = self.manifest.data.get("redesign_loop_count", 0) + 1
         ctx = StageContext(
             task_dir=self.task_dir,
             prompts_dir=PACKAGE_DIR / "prompts",
@@ -282,6 +301,8 @@ class Engine:
             revision_inputs=revision_inputs,
             project_config=self.project_config,
             artifact_writer=self.artifact_writer,
+            pass_n=current_pass_n,
+            max_redesign_loops=MAX_REDESIGN_LOOPS,
         )
         try:
             result = handler.run(stage_def, ctx)

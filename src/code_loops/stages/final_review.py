@@ -149,17 +149,28 @@ def _parse_verdict(text: str) -> dict:
       verdict: "approved" | "needs_more_work"
       reason: str
       corrective_subtasks: list[dict] (only when needs_more_work)
+
+    Parses via `json.JSONDecoder.raw_decode` (brace-balanced) instead of
+    regex closing-fence detection, чтобы handle nested ```sql blocks внутри
+    spec_md string values. Anchored на `\\n```json\\n` opening если present,
+    otherwise falls back к any ``` block, otherwise scans для first `{`.
     """
-    m = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
-    if not m:
+    # Find opening anchor (prefer explicit ```json fence)
+    m = re.search(r"```json\s*\n", text)
+    if m is None:
+        m = re.search(r"```\s*\n", text)
+    start = m.end() if m else 0
+    # Locate first `{` after the opening — this should be the JSON object start
+    brace_start = text.find("{", start)
+    if brace_start == -1:
         return {
             "verdict": "needs_more_work",
-            "reason": "(could not parse final_review JSON verdict)",
+            "reason": "(could not parse final_review JSON verdict — no `{` found)",
             "corrective_subtasks": [],
         }
-    raw = m.group(1).strip()
+    decoder = json.JSONDecoder()
     try:
-        v = json.loads(raw)
+        v, _end = decoder.raw_decode(text[brace_start:])
     except json.JSONDecodeError as e:
         return {
             "verdict": "needs_more_work",

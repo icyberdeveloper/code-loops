@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from code_loops.worktree import TestProtectionViolation, Worktree, WorktreeError
+from code_loops.worktree import (
+    RoleScopeViolation,
+    TestProtectionViolation,
+    Worktree,
+    WorktreeError,
+)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -200,6 +205,64 @@ def test_assert_no_test_changes_catches_new_test_file(tmp_path):
     assert "tests/test_new.py" in exc.value.files
 
 
+# ---- per-role scope enforcement (Fix B) ----
+
+
+def test_assert_only_touched_passes_when_allowed(tmp_path):
+    """Role wrote file внутри can_write scope — no raise."""
+    base = _make_base_repo(tmp_path)
+    wt = Worktree.create(base, "code-loops/test-scope-ok", tmp_path / "wt-sc-ok")
+    base_sha = wt.head_sha()
+    (wt.path / "app" / "main.py").write_text("# changed\n")
+    # Allowed list includes app/main.py exactly
+    wt.assert_only_touched(["app/main.py"], since_sha=base_sha)
+
+
+def test_assert_only_touched_raises_on_out_of_scope_write(tmp_path):
+    """Role wrote file НЕ в can_write list — raises RoleScopeViolation."""
+    base = _make_base_repo(tmp_path)
+    wt = Worktree.create(base, "code-loops/test-scope-bad", tmp_path / "wt-sc-bad")
+    base_sha = wt.head_sha()
+    # eval_engineer был ограничен tests/eval_data/, но тронул tests/integration
+    (wt.path / "tests" / "test_existing.py").write_text("# overstepped\n")
+    with pytest.raises(RoleScopeViolation) as exc:
+        wt.assert_only_touched(["tests/eval_data/baseline.json"], since_sha=base_sha)
+    assert "tests/test_existing.py" in exc.value.violations
+    assert "tests/eval_data/baseline.json" in exc.value.allowed
+
+
+def test_assert_only_touched_handles_directory_prefix(tmp_path):
+    """can_write поддерживает directory prefix — все files под prefix allowed."""
+    base = _make_base_repo(tmp_path)
+    wt = Worktree.create(base, "code-loops/test-dir-prefix", tmp_path / "wt-dir-pre")
+    base_sha = wt.head_sha()
+    (wt.path / "tests" / "test_existing.py").write_text("# changed\n")
+    # tests/ directory prefix — should match tests/test_existing.py
+    wt.assert_only_touched(["tests"], since_sha=base_sha)
+
+
+def test_assert_only_touched_empty_allowed_blocks_any_write(tmp_path):
+    """can_write: [] means role cannot write anything — any change raises."""
+    base = _make_base_repo(tmp_path)
+    wt = Worktree.create(base, "code-loops/test-empty-scope", tmp_path / "wt-empty-sc")
+    base_sha = wt.head_sha()
+    (wt.path / "app" / "main.py").write_text("# any change\n")
+    with pytest.raises(RoleScopeViolation):
+        wt.assert_only_touched([], since_sha=base_sha)
+
+
+def test_assert_only_touched_catches_uncommitted_changes(tmp_path):
+    """Out-of-scope working tree changes (uncommitted) trigger raise."""
+    base = _make_base_repo(tmp_path)
+    wt = Worktree.create(base, "code-loops/test-uncommit", tmp_path / "wt-uncommit")
+    base_sha = wt.head_sha()
+    # Working tree edit, NOT committed
+    (wt.path / "tests" / "test_existing.py").write_text("# uncommitted\n")
+    with pytest.raises(RoleScopeViolation) as exc:
+        wt.assert_only_touched(["app/main.py"], since_sha=base_sha)
+    assert any("tests/test_existing.py" in v for v in exc.value.violations)
+
+
 # ---- configurable test_paths / lock_strategy ----
 
 
@@ -269,6 +332,42 @@ def test_assert_no_test_changes_empty_paths_is_noop(tmp_path):
     # Empty test_paths → no violation even if tests/ changed
     wt.assert_no_test_changes(base_sha, test_paths=[])
     wt.cleanup()
+
+
+def test_rollback_paths_removes_new_files_not_in_tree(tmp_path):
+    """Rollback к pre-role tree → newly-created file gets unlinked."""
+    base = _make_base_repo(tmp_path)
+    target = tmp_path / "wt"
+    wt = Worktree.create(base, "code-loops/rollback-new", target)
+    pre_tree = wt.snapshot_tree()  # baseline без new file
+    (wt.path / "new_artifact.txt").write_text("created by role\n")
+    assert (wt.path / "new_artifact.txt").exists()
+    wt.rollback_paths(["new_artifact.txt"], pre_tree)
+    assert not (wt.path / "new_artifact.txt").exists()
+
+
+def test_rollback_paths_restores_modified_file_from_tree(tmp_path):
+    """Rollback restores tracked file к its content в pre-role tree."""
+    base = _make_base_repo(tmp_path)
+    target = tmp_path / "wt"
+    wt = Worktree.create(base, "code-loops/rollback-mod", target)
+    pre_tree = wt.snapshot_tree()
+    (wt.path / "app" / "main.py").write_text("def hello(): return 'CORRUPTED'\n")
+    wt.rollback_paths(["app/main.py"], pre_tree)
+    assert (wt.path / "app" / "main.py").read_text() == "def hello(): return 'hi'\n"
+
+
+def test_rollback_paths_preserves_other_writes(tmp_path):
+    """Rolling back violation file leaves other in-scope writes alone."""
+    base = _make_base_repo(tmp_path)
+    target = tmp_path / "wt"
+    wt = Worktree.create(base, "code-loops/rollback-mixed", target)
+    pre_tree = wt.snapshot_tree()
+    (wt.path / "in_scope.json").write_text("{}\n")  # in-scope (kept)
+    (wt.path / "out_of_scope.py").write_text("# bad\n")  # violation (rolled back)
+    wt.rollback_paths(["out_of_scope.py"], pre_tree)
+    assert (wt.path / "in_scope.json").exists()
+    assert not (wt.path / "out_of_scope.py").exists()
 
 
 def test_path_under_any_helper():

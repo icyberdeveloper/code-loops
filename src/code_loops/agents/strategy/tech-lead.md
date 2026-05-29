@@ -110,10 +110,18 @@ subtasks:
     depends_on: [other_id, ...]              # omit if no deps
     wave: 0                                  # optional: parallelization group (see below)
     needs: [prompt_engineer, eval_engineer]  # optional: extra pre-roles (see below)
+    roles:                                    # optional but RECOMMENDED: per-role scope (Fix B)
+      eval_engineer:
+        can_write: [path/to/reference_data.json]
+      test_writer:
+        can_write: [path/to/test_file.py]
+      coder:
+        can_write: [path/to/production.py]
     spec_md: |
       Multi-line spec for THIS subtask only.
       
-      What to implement: ...
+      What this subtask achieves (problem-level WHAT, не WHO writes WHICH file):
+      ...
       
       Side effects: <DB write / outbox / LLM call / file write / scheduler job — or "none (pure)">
       
@@ -127,6 +135,58 @@ subtasks:
   - id: ...
 ```
 ```
+
+## CRITICAL — spec_md vs `roles.<name>.can_write` separation
+
+**spec_md describes WHAT the subtask achieves at high level**. НЕ embed
+per-role instructions ("eval_engineer should write X, test_writer
+should write Y") в spec_md. Это создаёт ambiguity: pre-роли readовают
+spec_md and overstep their scope, taking ownership что должно было
+принадлежать другой роли.
+
+**Per-role file ownership goes в structured `roles.<name>.can_write` field.**
+Iterator enforces — каждая role can only write to its declared paths
+(violation → immediate failure с explicit scope feedback).
+
+### Bad spec_md (ambiguous, allows role overstep):
+
+```yaml
+spec_md: |
+  What to implement:
+    1. eval_engineer designs validator_baseline.json schema with sections...
+    2. test_writer writes tests/integration/test_validator_spelling.py
+       with parametrized tests...
+    3. coder verifies harness runs deterministically.
+```
+
+### Good spec_md + roles scope:
+
+```yaml
+files:
+  create:
+    - tests/integration/validator_baseline.json
+    - tests/integration/test_validator_spelling.py
+roles:
+  eval_engineer:
+    can_write: [tests/integration/validator_baseline.json]
+  test_writer:
+    can_write: [tests/integration/test_validator_spelling.py]
+  coder:
+    can_write: []   # verification subtask — no production code
+spec_md: |
+  What this subtask achieves: baseline test fixtures + parametrized
+  loader для validator regression detection.
+  
+  Outputs:
+  - JSON fixtures с 16 known inversions + 10 typo cases
+  - Test module loading JSON, asserting pre-fix failure pattern
+  
+  Tests prove: 21 fail pre-fix, schema validates, all cutoffs present.
+```
+
+The `roles` block makes ownership unambiguous. The spec_md тут только
+about WHAT is built, not WHO builds WHICH file. Each role gets its
+slice — пишет only to its declared can_write paths.
 
 ## Schema rules (engine validates strictly)
 
@@ -144,6 +204,33 @@ subtasks:
 - `needs` if present MUST be a list of non-empty role-name strings
   (e.g. `[prompt_engineer, eval_engineer]`). Names not declared in
   pipeline.yaml are skipped at runtime with a warning, not an error.
+- `mode` (optional) — drives validator semantics. One of:
+  - `tdd` (default): pytest must pass green; production code makes
+    failing tests pass.
+  - `baseline`: pre-fix state capture. Failing tests are EXPECTED;
+    use `@pytest.mark.xfail(strict=True)` with rationale. Validator
+    checks specific failure count via `acceptance.pytest_outcome_count`.
+  - `refactor`: no behavior change. All existing tests still pass.
+  - `hotfix`: narrow targeted fix; new test asserts it.
+- `acceptance` (optional, RECOMMENDED) — list of machine-verifiable
+  post-conditions. Engine runs each check после role finishes editing;
+  subtask shipped только когда ВСЕ acceptance criteria met (in addition
+  к pytest+ruff). This is the structural answer to "agent says done
+  but spec not met" — eliminates LLM judgment per-subtask. Types:
+  - `{type: pytest_collected_count, target: <int>}` — `pytest --collect-only`
+    must report exactly target tests.
+  - `{type: pytest_outcome_count, outcomes: {passed: N, xfailed: M, ...}}`
+    — pytest summary must match counts. Use для baseline mode.
+  - `{type: file_contains_pattern, file: <path>, pattern: <regex>}`
+    — regex must match in file (e.g. confirm xfail marker added).
+  - `{type: file_not_contains_pattern, file: <path>, pattern: <regex>}`
+    — regex must NOT match (e.g. confirm TODO removed).
+  - `{type: file_size_min, file: <path>, bytes: <int>}` — min file size.
+  - `{type: ruff_clean, file: <path-or-dir>}` — `ruff check <file>` rc=0.
+  - `{type: json_path_exists, file: <path>, path: [<keys>]}` — JSON
+    structural path exists (e.g. baseline JSON has known_inversions[0].canonical).
+  Emit AT LEAST one acceptance check per subtask. Be specific —
+  vague checks fire false-positives or false-negatives.
 
 ## Pre-roles (planner-driven `needs:` field)
 

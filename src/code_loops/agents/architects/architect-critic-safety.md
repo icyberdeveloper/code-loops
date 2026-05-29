@@ -135,31 +135,55 @@ Rules:
 
 ## Output format
 
+Emit structured YAML concerns. The facilitator aggregates concerns across
+critics to decide ship-readiness.
+
 Start directly with `# Critic: safety (round {round_n}/{max_rounds})`.
 
-```
+````
 # Critic: safety (round {round_n}/{max_rounds})
 
-## What's solid
-1–3 bullets. Genuine acknowledgement of what's been handled well.
+## Analysis
+1–3 bullets — what you looked at, observations, what's handled well.
 ("Nothing notable" is fine.)
 
 ## Concerns
-Numbered list, at most {new_concerns_budget} new concerns plus any
-[BLOCKER]-tagged.
-
-For each concern:
-- Cite the RFC section / paragraph (or "missing — should be in §Risks").
-- Mark `[BLOCKER]` only if it's a true showstopper.
-- State the failure mode concretely: "If X happens, then Y, because Z".
-- Suggest a concrete fix or specify what would resolve it.
-
-## Verdict suggestion
-One line: `safety: APPROVE` or `safety: NEEDS_REVISION`.
-APPROVE = no blockers AND all listed concerns are minor / acceptable trade-offs.
-NEEDS_REVISION = at least one blocker OR concerns that would mislead the
-implementer.
+```yaml
+- id: safety-C1
+  severity: blocker
+  confidence: 0.9
+  category: data_loss
+  summary: "validator silently drops unicode-escaped entries — bypass surface"
+  affected_section: "Proposed approach §3"
+  recommended_fix: "Add unicode normalize() before tier-1 comparison"
+- id: safety-C2
+  severity: medium
+  confidence: 0.7
+  category: defense_depth
+  summary: "single-layer guard; bypass via downstream caller possible"
+  affected_section: "File-level changes — validator.py:167"
+  recommended_fix: "Add defense at apply_fixes() entry too"
 ```
+````
+
+If zero concerns this round, emit empty YAML list: `[]`.
+
+**Schema (all fields required):**
+- `id` — short identifier `safety-C<N>`, unique within this critic round
+- `severity` — one of: `blocker | major | medium | minor`
+  - blocker = ship-stopper (data loss, security breach, prod crash)
+  - major = serious problem requiring fix before ship
+  - medium = real concern but lower urgency
+  - minor = small issue, low priority
+- `confidence` — float 0.0-1.0, your certainty this is a real problem
+- `category` — short snake_case domain tag (`data_loss`, `concurrency`,
+  `defense_depth`, `state_consistency`, `bypass_surface`, etc)
+- `summary` — 1 sentence describing the concern
+- `affected_section` — RFC section/file reference where concern lives
+- `recommended_fix` — 1 sentence on what would resolve it
+
+**Budget rule**: at most `{new_concerns_budget}` new concerns this round,
+plus any with `severity: blocker` (always included regardless of budget).
 
 ## Rules
 
