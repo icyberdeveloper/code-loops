@@ -238,6 +238,21 @@ _BRIEF_FALLBACK = (
 )
 
 
+def get_test_env_stub(project_config: dict | None) -> dict[str, str]:
+    """Return key=value pairs to write into worktree .env for test runs.
+
+    Values are fake stubs — just enough for Settings() to initialize at
+    import time without real secrets. Real tokens must never go here.
+    Returns empty dict if not configured (worktree gets no .env).
+    """
+    if not project_config:
+        return {}
+    raw = project_config.get("test_env_stub") or {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v) for k, v in raw.items()}
+
+
 def inject_project_brief(prompt_text: str, project_config: dict | None) -> str:
     """Replace `{PROJECT_BRIEF}` placeholder in prompt with brief.md content.
 

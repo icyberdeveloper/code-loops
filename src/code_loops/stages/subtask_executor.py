@@ -30,7 +30,7 @@ import yaml
 from rich.console import Console
 
 from ..acceptance import AcceptanceViolation, check_acceptance, format_violations
-from ..project_loader import get_test_infrastructure
+from ..project_loader import get_test_env_stub, get_test_infrastructure
 from ..runner import RunnerFactory
 from ..sandbox import scoped_sandbox
 from ..worktree import Worktree
@@ -100,6 +100,11 @@ class SubtaskExecutorStage:
         else:
             wt = Worktree.create(base_repo, branch, wt_path, force=True)
             wt.tag_base()
+
+        env_stub = get_test_env_stub(ctx.project_config)
+        if env_stub:
+            env_lines = "\n".join(f"{k}={v}" for k, v in env_stub.items())
+            (wt.path / ".env").write_text(env_lines + "\n")
 
         stage_def = {**stage_def, "roles": normalize_roles(stage_def["roles"])}
         roles = stage_def["roles"]
