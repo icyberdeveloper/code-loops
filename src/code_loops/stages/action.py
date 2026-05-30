@@ -17,6 +17,7 @@ from __future__ import annotations
 from rich.console import Console
 
 from ..runner import RunnerFactory
+from .auto_commit import run_auto_commit
 from .auto_resurvey import run_auto_resurvey
 from .final_validation import run_final_validation
 from .prompt import StageContext
@@ -28,6 +29,7 @@ _HANDLERS = {
     "final_validation": run_final_validation,
     "regression_check": run_regression_check,
     "auto_resurvey": run_auto_resurvey,
+    "auto_commit": run_auto_commit,
 }
 
 

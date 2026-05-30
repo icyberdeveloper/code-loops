@@ -226,3 +226,12 @@ stages:
     handler: auto_resurvey
     inputs: [docs/maintenance_notes.md]
     outputs: []
+
+  # 13. Auto-commit: commit worktree changes onto the pipeline branch and
+  #     merge --no-ff into base_repo main. Only runs after release_review
+  #     approved — engine skips this stage if release_review loops back.
+  - name: auto_commit
+    type: action
+    handler: auto_commit
+    inputs: []
+    outputs: []
